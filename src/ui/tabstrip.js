@@ -12,7 +12,7 @@
 
   function iconMarkup(t) {
     if (t.newtab) return `<span class="glyph">${Icons.sparkle}</span>`;
-    if (t.internal) return `<span class="glyph">${Icons.settings}</span>`;
+    if (t.internal) return `<span class="glyph">${/^coffee:\/\/history/.test(t.url) ? Icons.history : Icons.settings}</span>`;
     if (t.favicon) return `<img src="${encodeURI(t.favicon)}" alt="" draggable="false">`;
     if (t.url) return `<span class="letter">${letterFor(t)}</span>`;
     return `<span class="glyph">${Icons.globe}</span>`;

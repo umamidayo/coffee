@@ -410,6 +410,13 @@ function publicSettings() {
   };
 }
 
+/** Open the history page, reusing an open one. */
+function openHistory() {
+  const existing = tabs.tabs.find((t) => t.url.startsWith('coffee://history'));
+  if (existing) tabs.activate(existing.id);
+  else tabs.create({ url: 'coffee://history/' });
+}
+
 function openSettings(section) {
   const url = `coffee://settings/${section ? `#${String(section).replace(/[^a-z-]/g, '')}` : ''}`;
   const existing = tabs.tabs.find((t) => t.url.startsWith('coffee://settings'));
@@ -448,6 +455,7 @@ function onInput(e, input, tab) {
     else if (key === 'd' && !shift) starBookmark();
     else if (key === 'b' && shift) toggleBookmarksBar();
     else if (key === 'j') toggleDownloads();
+    else if (key === 'h' && !shift) openHistory();
     else if (key === 'f' && !shift) openFind();
     else if (key === 'g') openFind(shift ? 'find:prev' : 'find:next');
     else if (key === '=' || key === '+') zoom(1);
@@ -1049,8 +1057,8 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch']);
-const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete']);
+const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list']);
 
 function senderKind(e) {
   const wc = e.sender;
@@ -1166,6 +1174,7 @@ ipcMain.on('cmd', (e, type, p = {}) => {
     { label: 'New private tab', accel: 'Ctrl+Shift+N', action: () => tabs.create({ private: true }) },
       { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', disabled: !tabs.closed.length, action: () => tabs.reopenClosed() },
       { sep: true },
+      { label: 'History', accel: 'Ctrl+H', action: openHistory },
       { label: 'Downloads', accel: 'Ctrl+J', action: () => toggleDownloads() },
       { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: data.settings.data.bookmarksBar, action: toggleBookmarksBar },
       { label: tabsOnTop() ? 'Move tabs to the side' : 'Move tabs to the top', action: toggleTabLayout },
@@ -1212,6 +1221,7 @@ ipcMain.on('cmd', (e, type, p = {}) => {
     case 'ext:store': navigate('https://chromewebstore.google.com/category/extensions', { newTab: true }); overlay.close(); break;
     case 'settings:set': setSetting(p.key, p.value); break;
     case 'history:clear': data.clearHistory(); break;
+    case 'history:delete': data.deleteHistory(Array.isArray(p.urls) ? p.urls.slice(0, 1000) : []); break;
     case 'data:clear':
       webSession.clearStorageData().catch(() => {});
       webSession.clearCache().catch(() => {});
@@ -1237,6 +1247,7 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
     case 'newtab:data':
       return { show: data.settings.data.newtabShortcuts !== false, shortcuts: data.shortcuts(8) };
     case 'settings:get': return settingsPayload();
+    case 'history:list': return data.historyList({ q: p.q, offset: p.offset });
     case 'import:detect': return importer.detect();
     case 'import:run': {
       const result = importer.run({
@@ -1265,7 +1276,7 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
 // ---------------------------------------------------------------------------
 
 function registerInternalProtocol(ses) {
-  const hosts = new Set(['newtab', 'settings', 'error', 'welcome']);
+  const hosts = new Set(['newtab', 'settings', 'error', 'welcome', 'history']);
   ses.protocol.handle('coffee', async (req) => {
     const u = new URL(req.url);
     if (!hosts.has(u.hostname)) return new Response('Not found', { status: 404 });

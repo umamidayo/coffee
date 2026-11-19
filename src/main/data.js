@@ -100,6 +100,33 @@ function importHistory(entries) {
   return n;
 }
 
+/**
+ * History for the history page: newest first, optionally filtered by a search
+ * query (title or address), paged by `offset`.
+ */
+function historyList({ q = '', offset = 0, limit = 150 } = {}) {
+  const query = String(q || '').trim().toLowerCase();
+  let list = [...history.values()];
+  if (query) {
+    const words = query.split(/\s+/);
+    list = list.filter((h) => {
+      const hay = `${h.title || ''} ${h.url}`.toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+  }
+  list.sort((a, b) => b.last - a.last);
+  const start = Math.max(0, Number(offset) || 0);
+  const items = list.slice(start, start + limit).map((h) => ({ url: h.url, title: h.title, favicon: h.favicon || '', last: h.last, visits: h.visits }));
+  return { items, total: list.length, more: start + limit < list.length };
+}
+
+function deleteHistory(urls) {
+  let n = 0;
+  for (const u of urls || []) if (history.delete(String(u))) n++;
+  if (n) persistHistory();
+  return n;
+}
+
 function clearHistory() {
   history.clear();
   persistHistory();
@@ -403,6 +430,8 @@ module.exports = {
   recordVisit,
   updateHistoryMeta,
   clearHistory,
+  historyList,
+  deleteHistory,
   importHistory,
   findBookmark,
   addBookmark,

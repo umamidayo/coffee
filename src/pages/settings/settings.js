@@ -249,6 +249,7 @@
   $('adblock').onchange = (e) => set('adblock', e.target.checked);
   $('sleepMinutes').onchange = (e) => set('sleepMinutes', Number(e.target.value));
   $('clearHistory').onclick = () => { api.send('history:clear'); toast('History cleared'); };
+  $('viewHistory').onclick = () => { location.href = 'coffee://history/'; };
   $('clearData').onclick = () => { api.send('data:clear'); toast('Cookies and site data cleared'); };
   $('changeDir').onclick = async () => { $('downloadDir').textContent = await api.invoke('downloads:choose-dir'); };
 
