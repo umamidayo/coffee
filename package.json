@@ -10,7 +10,7 @@
     "icon": "electron scripts/make-icon.js",
     "predist": "node scripts/build-scriptlets.js",
     "dist": "electron-builder --win --publish never",
-    "prerelease": "node scripts/build-scriptlets.js",
+    "prerelease": "node scripts/tag-release.js && node scripts/build-scriptlets.js",
     "release": "electron-builder --win --publish always"
   },
   "license": "GPL-3.0-or-later",
