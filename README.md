@@ -16,7 +16,7 @@ npm run icon       # re-render build/icon.png + icon.ico from build/icon.svg
 
 Installed copies check GitHub Releases on startup and every 4 hours. They download new versions in the background and show a **Restart to update** button. Anything left pending installs the next time Coffee quits.
 
-1. One-time setup: releases publish to **github.com/umamidayo/coffee-browser** (`build.publish` in `package.json`). Create that repository as **public**, then create a GitHub token that can write releases (classic: `repo` scope; fine-grained: Contents read/write on that repo) and expose it as `GH_TOKEN`.
+1. One-time setup: releases publish to **github.com/umamidayo/coffee** (`build.publish` in `package.json`). Create that repository as **public**, then create a GitHub token that can write releases (classic: `repo` scope; fine-grained: Contents read/write on that repo) and expose it as `GH_TOKEN`.
 2. For each update, bump `version` in `package.json` (e.g. `0.1.0` → `0.1.1`), then run `npm run release`.
 
 The repository must be public so installed copies can read the releases without a token. The installer is unsigned, so Windows SmartScreen shows a warning on first install. Updates install silently.
