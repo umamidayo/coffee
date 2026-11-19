@@ -30,6 +30,15 @@ async function get(url, json = false) {
 async function main() {
   const tag = process.argv[2] || (await get(`${API}/releases/latest`, true)).tag_name;
   console.log(`uBlock Origin ${tag}`);
+  // Already built from this uBO release: keep the file untouched so the
+  // working tree stays clean (the build is deterministic for a given tag).
+  try {
+    const current = JSON.parse(fs.readFileSync(OUT, 'utf8'));
+    if (current.ubo === tag && !process.argv.includes('--force')) {
+      console.log(`${path.relative(process.cwd(), OUT)} is already built from ${tag}`);
+      return;
+    }
+  } catch { /* no file yet */ }
 
   // Fetch src/js/resources/* plus any ../ helpers they import.
   const files = new Map(); // repo path -> source text
