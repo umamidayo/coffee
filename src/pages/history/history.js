@@ -57,7 +57,14 @@
         updateCount(-1);
       }, 200);
     });
-    a.append(time, ico, title, where, del);
+    const delSite = Object.assign(document.createElement('button'), { className: 'del site', textContent: 'Clear site', title: `Remove everything from ${host(h.url)}` });
+    delSite.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      api.send('history:clear-site', { site: host(h.url) });
+      setTimeout(() => load(true), 150);
+    });
+    a.append(time, ico, title, where, delSite, del);
     return a;
   }
 
@@ -121,22 +128,27 @@
     }
   });
 
-  // "Clear all" asks for a second click instead of a dialog.
+  // Clearing asks for a second click instead of a dialog.
   const clearBtn = $('clearAll');
+  const range = $('range');
   let armed = 0;
+  const disarm = () => {
+    clearTimeout(armed);
+    armed = 0;
+    clearBtn.textContent = 'Clear';
+    clearBtn.classList.remove('confirm');
+  };
+  range.addEventListener('change', disarm);
   clearBtn.addEventListener('click', () => {
     if (!armed) {
       clearBtn.textContent = 'Click again to clear';
       clearBtn.classList.add('confirm');
-      armed = setTimeout(() => { armed = 0; clearBtn.textContent = 'Clear all'; clearBtn.classList.remove('confirm'); }, 3000);
+      armed = setTimeout(disarm, 3000);
       return;
     }
-    clearTimeout(armed);
-    armed = 0;
-    clearBtn.textContent = 'Clear all';
-    clearBtn.classList.remove('confirm');
-    api.send('history:clear');
-    load(true);
+    disarm();
+    api.send('history:clear-range', { range: range.value });
+    setTimeout(() => load(true), 150);
   });
 
   load(true);

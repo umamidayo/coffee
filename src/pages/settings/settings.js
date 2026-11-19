@@ -28,6 +28,7 @@
     bolt: svg('<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>'),
     download: svg('<path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 20h14"/>'),
     import: svg('<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M4 12h11"/><path d="M11 8l4 4-4 4"/>'),
+    globe: svg('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.3 2.4 3.4 5.2 3.4 8.5s-1.1 6.1-3.4 8.5c-2.3-2.4-3.4-5.2-3.4-8.5S9.7 5.9 12 3.5z"/>'),
     puzzle: svg('<path d="M9 4.5a2 2 0 0 1 4 0V6h3.5a1.5 1.5 0 0 1 1.5 1.5V11h-1.5a2 2 0 0 0 0 4H18v3.5a1.5 1.5 0 0 1-1.5 1.5H13v-1.5a2 2 0 0 0-4 0V20H5.5A1.5 1.5 0 0 1 4 18.5V15h1.5a2 2 0 0 0 0-4H4V7.5A1.5 1.5 0 0 1 5.5 6H9z"/>'),
     info: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/>'),
   };
@@ -196,9 +197,65 @@
     $('sleepMinutes').value = String(s.sleepMinutes);
     $('downloadDir').textContent = s.downloadDir;
     $('aboutLine').textContent = `Coffee ${s.version} · Chromium ${s.chrome} · Electron ${s.electron}`;
+    renderExceptions();
     renderExtensions();
     renderThemes();
     renderUpdate();
+  }
+
+  // ---- ad blocker exceptions ----
+  function renderExceptions() {
+    const list = s.adblockExceptions || [];
+    $('exceptionsRow').hidden = !list.length;
+    $('exceptionsInfo').textContent = list.length
+      ? `Ads and trackers are allowed on ${list.length} site${list.length === 1 ? '' : 's'}`
+      : 'Sites where ads and trackers are allowed';
+    const box = $('exceptionList');
+    box.textContent = '';
+    for (const site of list) {
+      const chip = Object.assign(document.createElement('span'), { className: 'chip' });
+      const x = Object.assign(document.createElement('button'), { textContent: '×', title: `Block ads on ${site} again` });
+      x.setAttribute('aria-label', `Remove ${site}`);
+      x.onclick = () => api.send('adblock:allow', { site, allow: false });
+      chip.append(site, x);
+      box.appendChild(chip);
+    }
+  }
+
+  const siteOf = (id) => $(id).value.trim();
+  function addException() {
+    const site = siteOf('exceptionInput');
+    if (!site) return;
+    api.send('adblock:allow', { site, allow: true });
+    $('exceptionInput').value = '';
+    toast(`Ads allowed on ${site}`);
+  }
+
+  // ---- clearing per site / by date ----
+  async function fillSites(listId, channel) {
+    const rows = (await api.invoke(channel)) || [];
+    $(listId).replaceChildren(...rows.map((r) => Object.assign(document.createElement('option'), { value: r.site, label: `${r.count}` })));
+  }
+
+  const RANGE_TEXT = { today: 'today', yesterday: 'yesterday', '3days': 'the last 3 days', '7days': 'the last 7 days', all: 'all time' };
+  function clearSiteField(inputId, channel, done) {
+    const site = siteOf(inputId);
+    if (!site) { $(inputId).focus(); return; }
+    api.send(channel, { site });
+    $(inputId).value = '';
+    toast(done(site));
+    setTimeout(refreshSiteLists, 400);
+  }
+  function refreshSiteLists() {
+    fillSites('historySites', 'history:sites');
+    fillSites('cookieSites', 'cookies:sites');
+  }
+
+  async function renderDefaultBrowser() {
+    const st = (await api.invoke('browser:default')) || {};
+    $('defaultTitle').textContent = st.isDefault ? 'Coffee is your default browser' : 'Coffee is not your default browser';
+    $('defaultInfo').textContent = st.isDefault ? 'Links from other apps open here' : st.name ? `Currently ${st.name}` : 'Links from other apps open in another browser';
+    $('makeDefault').hidden = !!st.isDefault;
   }
 
   // ---- extensions (applies after a restart) ----
@@ -248,9 +305,22 @@
   $('restoreSession').onchange = (e) => set('restoreSession', e.target.checked);
   $('adblock').onchange = (e) => set('adblock', e.target.checked);
   $('sleepMinutes').onchange = (e) => set('sleepMinutes', Number(e.target.value));
-  $('clearHistory').onclick = () => { api.send('history:clear'); toast('History cleared'); };
+  $('clearHistory').onclick = () => {
+    const range = $('historyRange').value;
+    api.send('history:clear-range', { range });
+    toast(`History cleared for ${RANGE_TEXT[range] || range}`);
+    setTimeout(refreshSiteLists, 400);
+  };
+  $('clearHistorySite').onclick = () => clearSiteField('historySiteInput', 'history:clear-site', (site) => `History cleared for ${site}`);
+  $('clearCookieSite').onclick = () => clearSiteField('cookieSiteInput', 'cookies:clear-site', (site) => `Cookies and site data cleared for ${site}`);
+  $('historySiteInput').onkeydown = (e) => { if (e.key === 'Enter') $('clearHistorySite').click(); };
+  $('cookieSiteInput').onkeydown = (e) => { if (e.key === 'Enter') $('clearCookieSite').click(); };
+  $('exceptionAdd').onclick = addException;
+  $('exceptionInput').onkeydown = (e) => { if (e.key === 'Enter') addException(); };
   $('viewHistory').onclick = () => { location.href = 'coffee://history/'; };
-  $('clearData').onclick = () => { api.send('data:clear'); toast('Cookies and site data cleared'); };
+  $('clearData').onclick = () => { api.send('data:clear'); toast('Cookies and site data cleared'); setTimeout(refreshSiteLists, 400); };
+  $('makeDefault').onclick = () => { api.send('browser:set-default'); };
+  window.addEventListener('focus', renderDefaultBrowser);
   $('changeDir').onclick = async () => { $('downloadDir').textContent = await api.invoke('downloads:choose-dir'); };
 
   // ---- import from another browser ----
@@ -289,6 +359,8 @@
     toast('Import complete');
   };
   setupImport();
+  refreshSiteLists();
+  renderDefaultBrowser();
 
   api.on('settings', (next) => {
     const editingCustom = s && s.theme.preset === 'custom' && document.activeElement && document.activeElement.type === 'color';

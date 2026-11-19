@@ -2,6 +2,7 @@
 // Persistent user data: settings, bookmarks, history, session.
 const { app } = require('electron');
 const Store = require('./store');
+const sites = require('./sites');
 
 const SEARCH_ENGINES = {
   google: { name: 'Google', url: 'https://www.google.com/search?q=%s' },
@@ -17,7 +18,8 @@ const settings = new Store('settings', {
   bookmarksBar: true,
   tabLayout: 'vertical',   // 'vertical' (side) | 'horizontal' (top)
   compactSidebar: false,   // side tabs hidden until the mouse reaches the left edge
-  tabTitles: true,         // titles on top tabs and in the compact panel (false = icons only)
+  tabTitles: true,         // titles on every tab layout (false = icons only)
+  adblockExceptions: [],   // sites (and their subdomains) where ads and trackers aren't blocked
   newtabShortcuts: true,   // shortcut tiles on the new tab page
   hiddenShortcuts: [],     // hosts removed from the new tab page
   onboarded: false,        // finished (or skipped) the welcome setup
@@ -128,8 +130,62 @@ function deleteHistory(urls) {
 }
 
 function clearHistory() {
+  const n = history.size;
   history.clear();
   persistHistory();
+  return n;
+}
+
+/** Start of the local day `n` days ago. */
+function daysAgo(n) {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - n);
+  return d.getTime();
+}
+
+/** Remove entries whose last visit falls in [from, to); returns how many. */
+function clearHistorySpan(from, to) {
+  let n = 0;
+  for (const [url, h] of history) {
+    if (h.last >= from && h.last < to) { history.delete(url); n++; }
+  }
+  if (n) persistHistory();
+  return n;
+}
+
+/** Clear by calendar day: today, yesterday, the last 3 / 7 days (today included), or everything. */
+function clearHistoryRange(range) {
+  switch (range) {
+    case 'today': return clearHistorySpan(daysAgo(0), Infinity);
+    case 'yesterday': return clearHistorySpan(daysAgo(1), daysAgo(0));
+    case '3days': return clearHistorySpan(daysAgo(2), Infinity);
+    case '7days': return clearHistorySpan(daysAgo(6), Infinity);
+    case 'all': return clearHistory();
+    default: return 0;
+  }
+}
+
+/** Sites that appear in history, most visited first. */
+function historySites() {
+  const map = new Map();
+  for (const h of history.values()) {
+    const host = sites.hostOf(h.url);
+    if (host) map.set(host, (map.get(host) || 0) + 1);
+  }
+  return [...map].map(([site, count]) => ({ site, count })).sort((a, b) => b.count - a.count || a.site.localeCompare(b.site)).slice(0, 500);
+}
+
+/** Remove every page of a site (and its subdomains). */
+function clearHistorySite(site) {
+  const wanted = sites.normalizeHost(site);
+  if (!wanted) return 0;
+  let n = 0;
+  for (const [url, h] of history) {
+    if (sites.matches(sites.hostOf(h.url), wanted)) { history.delete(url); n++; }
+  }
+  if (n) persistHistory();
+  return n;
 }
 
 // ---- Bookmarks & folders ----------------------------------------------------
@@ -430,6 +486,9 @@ module.exports = {
   recordVisit,
   updateHistoryMeta,
   clearHistory,
+  clearHistoryRange,
+  clearHistorySite,
+  historySites,
   historyList,
   deleteHistory,
   importHistory,

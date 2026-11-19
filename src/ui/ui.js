@@ -21,9 +21,9 @@
   const active = () => state.tabs.find((t) => t.id === state.activeId) || null;
 
   // ---------- static icons ----------
-  $('new-tab').innerHTML = Icons.plus;
+  $('new-tab').innerHTML = `${Icons.plus}<span>New tab</span>`;
   $('new-tab-top').innerHTML = Icons.plus;
-  $('settings-btn').innerHTML = Icons.settings;
+  $('settings-btn').innerHTML = `${Icons.settings}<span>Settings</span>`;
   $('back').innerHTML = Icons.back;
   $('forward').innerHTML = Icons.forward;
   $('reload').innerHTML = Icons.reload;
@@ -84,7 +84,7 @@
   // =====================================================================
   const sideStrip = new window.TabStrip($('tabs'), {
     api, orientation: 'vertical', titles: false,
-    onHover: (n) => showTip(n), onLeave: () => hideTip(),
+    onHover: (n) => { if (!document.body.classList.contains('tab-titles')) showTip(n); }, onLeave: () => hideTip(),
   });
   const topStrip = new window.TabStrip($('htabs'), { api, orientation: 'horizontal', titles: true });
   let tabLayout = 'vertical';
@@ -100,7 +100,10 @@
     document.body.classList.toggle('tabs-top', layout === 'horizontal');
     document.body.classList.toggle('tabs-side', layout === 'vertical');
     document.body.classList.toggle('compact', layout === 'vertical' && !!s.compactSidebar);
-    topStrip.setTitles(s.tabTitles !== false);
+    const titles = s.tabTitles !== false;
+    document.body.classList.toggle('tab-titles', titles);
+    topStrip.setTitles(titles);
+    sideStrip.setTitles(titles);
     if (layout !== tabLayout) {
       tabLayout = layout;
       renderTabs();

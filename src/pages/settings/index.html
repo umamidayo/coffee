@@ -22,6 +22,7 @@
         <a href="#newtab" data-i="home">New tab page</a>
         <a href="#search-engine" data-i="search">Search</a>
         <a href="#privacy" data-i="shield">Privacy</a>
+        <a href="#default-browser" data-i="globe">Default browser</a>
         <a href="#startup" data-i="bolt">Startup &amp; performance</a>
         <a href="#downloads" data-i="download">Downloads</a>
         <a href="#import" data-i="import">Import</a>
@@ -68,7 +69,7 @@
             <label class="switch"><input type="checkbox" id="compactSidebar"><i></i></label>
           </div>
           <div class="row" id="titlesRow">
-            <div class="txt"><b>Show tab titles</b><span>On top tabs and in the compact sidebar. Off shows icons only</span></div>
+            <div class="txt"><b>Show tab titles</b><span>On the side bar, top tabs and the compact sidebar. Off shows icons only</span></div>
             <label class="switch"><input type="checkbox" id="tabTitles"><i></i></label>
           </div>
         </div>
@@ -101,7 +102,7 @@
       </section>
 
       <!-- Privacy -->
-      <section id="privacy" data-keywords="privacy ads trackers block history cookies clear data private">
+      <section id="privacy" data-keywords="privacy ads trackers block exceptions allow exempt whitelist history cookies clear data site yesterday today private">
         <header><h2>Privacy</h2><p>Ad blocking and the data Coffee keeps.</p></header>
         <div class="card">
           <div class="row">
@@ -109,16 +110,58 @@
             <label class="switch"><input type="checkbox" id="adblock"><i></i></label>
           </div>
           <div class="row">
-            <div class="txt"><b>Browsing history</b><span>Used for address bar suggestions and new tab shortcuts · Ctrl+H</span></div>
-            <button class="btn" id="viewHistory">View</button>
-            <button class="btn" id="clearHistory">Clear</button>
+            <div class="txt"><b>Ad blocker exceptions</b><span id="exceptionsInfo">Sites where ads and trackers are allowed</span></div>
+            <input class="site-input" id="exceptionInput" type="text" placeholder="example.com" spellcheck="false" autocomplete="off">
+            <button class="btn" id="exceptionAdd">Add</button>
+          </div>
+          <div class="row chips-row" id="exceptionsRow" hidden>
+            <div class="chips" id="exceptionList"></div>
           </div>
           <div class="row">
-            <div class="txt"><b>Cookies &amp; site data</b><span>Signs you out of most sites</span></div>
-            <button class="btn danger" id="clearData">Clear</button>
+            <div class="txt"><b>Browsing history</b><span>Used for address bar suggestions and new tab shortcuts · Ctrl+H</span></div>
+            <button class="btn" id="viewHistory">View</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Clear history</b><span id="historyClearInfo">Choose how far back to clear</span></div>
+            <select id="historyRange">
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="3days">Last 3 days</option>
+              <option value="7days">Last 7 days</option>
+              <option value="all">All time</option>
+            </select>
+            <button class="btn danger" id="clearHistory">Clear</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Clear history for a site</b><span>Removes every page of that site, including subdomains</span></div>
+            <input class="site-input" id="historySiteInput" type="text" list="historySites" placeholder="example.com" spellcheck="false" autocomplete="off">
+            <datalist id="historySites"></datalist>
+            <button class="btn danger" id="clearHistorySite">Clear</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Cookies &amp; site data for a site</b><span>Signs you out of that site only</span></div>
+            <input class="site-input" id="cookieSiteInput" type="text" list="cookieSites" placeholder="example.com" spellcheck="false" autocomplete="off">
+            <datalist id="cookieSites"></datalist>
+            <button class="btn danger" id="clearCookieSite">Clear</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>All cookies &amp; site data</b><span>Signs you out of most sites</span></div>
+            <button class="btn danger" id="clearData">Clear all</button>
           </div>
         </div>
         <p class="note">Tip: press Ctrl+Shift+N for a private tab. Nothing from it is saved after you close it.</p>
+      </section>
+
+      <!-- Default browser -->
+      <section id="default-browser" data-keywords="default browser links open http https set make">
+        <header><h2>Default browser</h2><p>Open links from other apps in Coffee.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b id="defaultTitle">Default browser</b><span id="defaultInfo"></span></div>
+            <button class="btn primary" id="makeDefault">Make default</button>
+          </div>
+        </div>
+        <p class="note">Windows asks you to confirm this in its own Default apps settings.</p>
       </section>
 
       <!-- Startup & performance -->

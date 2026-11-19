@@ -1,6 +1,6 @@
 /* Tab strip (src/ui/tabstrip.js). Variants:
    .ts-v               vertical icon tiles (sidebar)
-   .ts-v.ts-titles     vertical rows with titles (compact peek panel)
+   .ts-v.ts-titles     vertical rows with titles (side bar, compact peek panel)
    .ts-h.ts-titles     horizontal tabs with titles (tabs on top)        */
 
 .ts { position: relative; display: flex; gap: 4px; }
@@ -90,7 +90,8 @@
 .ts-v:not(.ts-titles) .tab.active .tab-close { opacity: 0; }
 .ts-v:not(.ts-titles) .tab:hover .tab-close { opacity: 1; transform: scale(1); }
 
-/* --- vertical rows with titles (compact peek) --- */
+/* --- vertical rows with titles (side bar and compact peek) --- */
+.ts-v.ts-titles { width: 100%; }
 .ts-v.ts-titles .tab { height: 36px; padding: 0 6px 0 4px; gap: 6px; }
 
 /* --- horizontal tabs (tabs on top) --- */

@@ -1,5 +1,5 @@
 /* Browser chrome. Metrics must match src/main/main.js:
-   SIDEBAR_W 56 · TOPBAR_H 46 · BOOKMARKS_H 32 · TABSTRIP_H 38
+   SIDEBAR_W 56 (216 with titles: SIDEBAR_TITLES_W) · TOPBAR_H 46 · BOOKMARKS_H 32 · TABSTRIP_H 38
 
    Layout, top to bottom: title bar (full width), bookmarks bar (only when
    there are bookmarks), then either the top tab strip (tabs-top) or the
@@ -19,6 +19,7 @@ body {
 body.no-bookmarks { --bm-h: 0px; }
 body.tabs-top { --page-top: calc(var(--chrome-top) + var(--strip-h)); --page-left: 0px; }
 body.tabs-side.compact { --page-left: 0px; }
+body.tabs-side.tab-titles:not(.compact) { --side-w: 216px; }
 
 html, body { height: 100%; overflow: hidden; user-select: none; }
 body { background: var(--bg); cursor: default; }
@@ -51,7 +52,12 @@ body.tabs-top #sidebar, body.compact #sidebar { display: none; }
   width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center;
   color: var(--muted); transition: background .15s, color .15s, transform .2s var(--spring);
 }
-.side-btn svg { width: 18px; height: 18px; }
+.side-btn svg { width: 18px; height: 18px; flex: none; }
+.side-btn span { display: none; font-size: 12.5px; }
+body.tab-titles .side-btn { width: 100%; justify-content: start; grid-auto-flow: column; align-items: center; gap: 10px; padding: 0 11px; }
+body.tab-titles .side-btn span { display: block; white-space: nowrap; }
+body.tab-titles #tabs-scroll { padding-left: 8px; padding-right: 8px; align-items: stretch; }
+body.tab-titles .side-bottom { width: 100%; padding-left: 8px; padding-right: 8px; }
 .side-btn:hover { background: var(--hover); color: var(--text); }
 .side-btn:active { transform: scale(.9); }
 #new-tab { margin-top: 4px; }

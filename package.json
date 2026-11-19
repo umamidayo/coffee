@@ -1,7 +1,7 @@
 {
   "name": "coffee",
   "productName": "Coffee",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "A fast, minimal, good-looking browser.",
   "main": "src/main/main.js",
   "scripts": {
@@ -77,6 +77,10 @@
     "acorn": "^8.15.0",
     "electron": "^45.4.1",
     "electron-builder": "^26.18.0"
+  },
+  "overrides": {
+    "adm-zip": "^0.6.1",
+    "minimatch": "^11.0.9"
   },
   "repository": {
     "type": "git",

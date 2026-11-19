@@ -15,6 +15,7 @@ const path = require('path');
 const { app, ipcMain } = require('electron');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { parse: parseDomain } = require('tldts-experimental');
+const sites = require('./sites');
 
 const REFRESH_MS = 6 * 60 * 60 * 1000;
 const PRELOAD = path.join(__dirname, '..', 'preload', 'adblock.js');
@@ -168,8 +169,39 @@ function refresh() {
 // Wiring into the session
 // ---------------------------------------------------------------------------
 
-function cosmetics(url, features) {
-  if (!enabled || !engine || !/^https?:/.test(url)) return null;
+// Sites the user turned blocking off for. Matches subdomains too.
+let exceptions = [];
+
+function setExceptions(list) {
+  exceptions = (Array.isArray(list) ? list : []).map(sites.normalizeHost).filter(Boolean);
+}
+
+function exempt(url) {
+  if (!exceptions.length) return false;
+  const host = sites.hostOf(url);
+  return !!host && exceptions.some((s) => sites.matches(host, s));
+}
+
+/** The page a request belongs to: the destination itself for a navigation, else the tab's current page. */
+function pageOf(details) {
+  if (details.resourceType === 'mainFrame') return details.url;
+  try {
+    const wc = details.webContents;
+    if (wc && !wc.isDestroyed()) return wc.getURL();
+  } catch { /* fall through */ }
+  return details.url;
+}
+
+/** The top-level page for an IPC sender (an iframe's own URL isn't the page the user is on). */
+function topUrl(e, url) {
+  try {
+    if (e.senderFrame && e.senderFrame.top) return e.senderFrame.top.url || url;
+  } catch { /* fall through */ }
+  return url;
+}
+
+function cosmetics(url, features, top = url) {
+  if (!enabled || !engine || !/^https?:/.test(url) || exempt(top)) return null;
   const parsed = parseDomain(url);
   const first = !features;
   return engine.getCosmeticsFilters({
@@ -199,19 +231,21 @@ function fixScriptlet(script) {
 
 ipcMain.on('adblock:start', (e, url) => {
   try {
-    const r = cosmetics(String(url || ''));
+    const u = String(url || '');
+    const r = cosmetics(u, undefined, topUrl(e, u));
     e.returnValue = r && r.active ? { styles: r.styles, scripts: r.scripts.map(fixScriptlet), observe: engine.config.enableMutationObserver } : null;
   } catch {
     e.returnValue = null;
   }
 });
 
-ipcMain.handle('adblock:dom', (_e, url, features) => {
-  const r = cosmetics(String(url || ''), {
+ipcMain.handle('adblock:dom', (e, url, features) => {
+  const u = String(url || '');
+  const r = cosmetics(u, {
     classes: Array.isArray(features && features.classes) ? features.classes.slice(0, 2000) : [],
     ids: Array.isArray(features && features.ids) ? features.ids.slice(0, 2000) : [],
     hrefs: Array.isArray(features && features.hrefs) ? features.hrefs.slice(0, 2000) : [],
-  });
+  }, topUrl(e, u));
   return r && r.active ? r.styles : '';
 });
 
@@ -220,11 +254,11 @@ function attach(ses) {
   if (!ses || attached.has(ses)) return;
   attached.add(ses);
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (d, cb) => {
-    if (enabled && engine) engine.onBeforeRequest(d, cb);
+    if (enabled && engine && !exempt(pageOf(d))) engine.onBeforeRequest(d, cb);
     else cb({});
   });
   ses.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (d, cb) => {
-    if (enabled && engine) engine.onHeadersReceived(d, cb);
+    if (enabled && engine && !exempt(pageOf(d))) engine.onHeadersReceived(d, cb);
     else cb({});
   });
   ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
@@ -256,4 +290,4 @@ async function setEnabled(session, on, blockedCb) {
   if (!refreshTimer) refreshTimer = setInterval(refresh, REFRESH_MS);
 }
 
-module.exports = { setEnabled, refresh, attach };
+module.exports = { setEnabled, setExceptions, refresh, attach };

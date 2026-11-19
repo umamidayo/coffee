@@ -13,6 +13,8 @@ const Overlay = require('./overlay');
 const updater = require('./updater');
 const compat = require('./compat');
 const importer = require('./importer');
+const sites = require('./sites');
+const { parse: parseDomain } = require('tldts-experimental');
 const { TabManager, NEWTAB, isInternal, displayUrl } = require('./tabs');
 
 // ---------------------------------------------------------------------------
@@ -49,6 +51,7 @@ const PAGES = path.join(ROOT, 'pages');
 
 // Layout metrics, mirrored in src/ui/ui.css.
 const SIDEBAR_W = 56;
+const SIDEBAR_TITLES_W = 216; // side tabs with titles
 const TOPBAR_H = 46;
 const BOOKMARKS_H = 32;
 const TABSTRIP_H = 38;  // tabs on top
@@ -123,6 +126,7 @@ function bookmarksBarShown() {
 
 const tabsOnTop = () => data.settings.data.tabLayout === 'horizontal';
 const compactSidebar = () => !tabsOnTop() && !!data.settings.data.compactSidebar;
+const sidebarWidth = () => (data.settings.data.tabTitles !== false ? SIDEBAR_TITLES_W : SIDEBAR_W);
 
 /** Where the chrome ends and the page begins (mirrors src/ui/ui.css). */
 function chromeTop() {
@@ -133,7 +137,7 @@ function pageBounds() {
   const [w, h] = win.getContentSize();
   if (htmlFullscreenTab) return { bounds: { x: 0, y: 0, width: w, height: h }, radius: 0 };
   const top = chromeTop() + (tabsOnTop() ? TABSTRIP_H : 0);
-  const left = tabsOnTop() || compactSidebar() ? 0 : SIDEBAR_W;
+  const left = tabsOnTop() || compactSidebar() ? 0 : sidebarWidth();
   return {
     bounds: { x: left, y: top, width: Math.max(0, w - left), height: Math.max(0, h - top) },
     radius: RADIUS,
@@ -404,6 +408,7 @@ function publicSettings() {
     tabTitles: data.settings.data.tabTitles !== false,
     extensions: !!ext,
     adblock: s.adblock,
+    adblockExceptions: s.adblockExceptions || [],
     searchEngine: s.searchEngine,
     update: updater.status,
     searchEngineName: (data.SEARCH_ENGINES[s.searchEngine] || data.SEARCH_ENGINES.google).name,
@@ -776,16 +781,118 @@ function showTooltip({ text, x, y, width }) {
   overlay.open('tooltip', { x: x - M, y: y - 15 - M, width: w, height: 30 + 2 * M }, { text });
 }
 
+/** The ad blocker exception that covers `host`, if any. */
+function exceptionFor(host) {
+  return (data.settings.data.adblockExceptions || []).find((x) => sites.matches(host, x)) || null;
+}
+
+/** Turn ad blocking off (`allow`) or back on for a site and its subdomains. */
+function setAdblockException(site, allow) {
+  const host = sites.normalizeHost(site);
+  if (!host) return false;
+  const s = data.settings.data;
+  const list = (s.adblockExceptions || []).filter((x) => x !== host);
+  if (allow) list.push(host);
+  s.adblockExceptions = list.sort();
+  adblock.setExceptions(s.adblockExceptions);
+  data.settings.save();
+  emit('settings', publicSettings());
+  broadcastSettings();
+  return true;
+}
+
 function shieldMenu(rect) {
   const tab = tabs.active;
   const on = data.settings.data.adblock;
   const n = tab ? tab.blocked : 0;
-  showMenu(rect.x, rect.y + rect.height + 4, [
-    { label: on ? `${n} ${n === 1 ? 'ad or tracker' : 'ads & trackers'} blocked here` : 'Ad blocking is off', disabled: true },
+  const host = tab && !tab.private ? sites.hostOf(displayUrl(tab.url)) : '';
+  const allowed = host ? exceptionFor(host) : null;
+  const items = [
+    { label: !on ? 'Ad blocking is off' : allowed ? 'Ad blocking is paused on this site' : `${n} ${n === 1 ? 'ad or tracker' : 'ads & trackers'} blocked here`, disabled: true },
     { label: `${data.settings.data.blockedTotal.toLocaleString()} blocked in total`, disabled: true },
     { sep: true },
     { label: on ? 'Turn off ad blocking' : 'Turn on ad blocking', action: () => setSetting('adblock', !on) },
-  ]);
+  ];
+  if (on && host) {
+    items.push({
+      label: allowed ? 'Resume blocking on this site' : 'Pause blocking on this site',
+      action: () => { if (setAdblockException(allowed || host, !allowed)) reload(); },
+    });
+  }
+  if (host) {
+    const site = cookieSite(host);
+    items.push({ label: 'Clear cookies for this site', action: () => { clearSiteData(site).catch(() => {}); } });
+  }
+  showMenu(rect.x, rect.y + rect.height + 4, items);
+}
+
+// ---------------------------------------------------------------------------
+// Cookies and site data, per site
+// ---------------------------------------------------------------------------
+
+/** The site a cookie domain belongs to (example.com for .www.example.com). */
+function cookieSite(domain) {
+  const d = String(domain || '').replace(/^\./, '').toLowerCase();
+  return parseDomain(d).domain || d;
+}
+
+/** Sites that have cookies, with a count each. */
+async function cookieSites() {
+  const map = new Map();
+  for (const c of await webSession.cookies.get({})) {
+    const site = cookieSite(c.domain);
+    if (site) map.set(site, (map.get(site) || 0) + 1);
+  }
+  return [...map].map(([site, count]) => ({ site, count })).sort((a, b) => a.site.localeCompare(b.site));
+}
+
+/**
+ * Remove a site's cookies and stored data (local storage, IndexedDB, caches).
+ * A registrable domain (example.com) covers all its subdomains; a longer host
+ * (mail.example.com) covers just that host and below. Returns cookies removed.
+ */
+async function clearSiteData(input) {
+  const site = sites.normalizeHost(input);
+  if (!site) return 0;
+  const origins = new Set();
+  for (const h of [site, `www.${site}`]) for (const p of ['https', 'http']) origins.add(`${p}://${h}`);
+  for (const h of data.history.values()) {
+    const host = sites.hostOf(h.url);
+    if (sites.matches(host, site)) { try { origins.add(new URL(h.url).origin); } catch { /* skip */ } }
+  }
+  let n = 0;
+  for (const c of await webSession.cookies.get({})) {
+    const d = c.domain.replace(/^\./, '').toLowerCase();
+    if (cookieSite(d) !== site && !sites.matches(d, site)) continue;
+    origins.add(`${c.secure ? 'https' : 'http'}://${d}`);
+    try { await webSession.cookies.remove(`${c.secure ? 'https' : 'http'}://${d}${c.path || '/'}`, c.name); n++; } catch { /* already gone */ }
+  }
+  await Promise.all([...origins].map((origin) => webSession.clearStorageData({ origin }).catch(() => {})));
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// Default browser
+// ---------------------------------------------------------------------------
+
+async function defaultBrowserStatus() {
+  try {
+    const info = await app.getApplicationInfoForProtocol('https://');
+    const same = !!info.path && path.resolve(info.path).toLowerCase() === path.resolve(process.execPath).toLowerCase();
+    return { isDefault: same, name: info.name || '' };
+  } catch {
+    return { isDefault: false, name: '' };
+  }
+}
+
+/** Windows doesn't let apps set themselves as default; open the page where the user picks Coffee. */
+function openDefaultBrowserSettings() {
+  if (process.platform === 'win32') {
+    shell.openExternal('ms-settings:defaultapps?registeredAppUser=Coffee').catch(() => {});
+  } else {
+    app.setAsDefaultProtocolClient('http');
+    app.setAsDefaultProtocolClient('https');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -977,6 +1084,7 @@ function setSetting(key, value) {
       break;
     case 'tabTitles':
       s.tabTitles = !!value;
+      layout();
       if (overlay.isOpen('sidebar')) overlay.close();
       break;
     case 'newtabShortcuts':
@@ -1012,6 +1120,7 @@ function settingsPayload() {
     searchEngine: s.searchEngine,
     engines: Object.entries(data.SEARCH_ENGINES).map(([id, e]) => ({ id, name: e.name })),
     adblock: s.adblock,
+    adblockExceptions: s.adblockExceptions || [],
     bookmarksBar: s.bookmarksBar,
     tabLayout: s.tabLayout,
     compactSidebar: !!s.compactSidebar,
@@ -1057,8 +1166,8 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete']);
-const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete', 'history:clear-range', 'history:clear-site', 'cookies:clear-site', 'adblock:allow', 'browser:set-default']);
+const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list', 'history:sites', 'cookies:sites', 'browser:default']);
 
 function senderKind(e) {
   const wc = e.sender;
@@ -1222,6 +1331,11 @@ ipcMain.on('cmd', (e, type, p = {}) => {
     case 'settings:set': setSetting(p.key, p.value); break;
     case 'history:clear': data.clearHistory(); break;
     case 'history:delete': data.deleteHistory(Array.isArray(p.urls) ? p.urls.slice(0, 1000) : []); break;
+    case 'history:clear-range': data.clearHistoryRange(String(p.range || '')); break;
+    case 'history:clear-site': data.clearHistorySite(p.site); break;
+    case 'cookies:clear-site': clearSiteData(p.site).catch(() => {}); break;
+    case 'adblock:allow': setAdblockException(p.site, !!p.allow); break;
+    case 'browser:set-default': openDefaultBrowserSettings(); break;
     case 'data:clear':
       webSession.clearStorageData().catch(() => {});
       webSession.clearCache().catch(() => {});
@@ -1248,6 +1362,9 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
       return { show: data.settings.data.newtabShortcuts !== false, shortcuts: data.shortcuts(8) };
     case 'settings:get': return settingsPayload();
     case 'history:list': return data.historyList({ q: p.q, offset: p.offset });
+    case 'history:sites': return data.historySites();
+    case 'cookies:sites': return cookieSites();
+    case 'browser:default': return defaultBrowserStatus();
     case 'import:detect': return importer.detect();
     case 'import:run': {
       const result = importer.run({
@@ -1323,6 +1440,7 @@ app.whenReady().then(async () => {
   webSession = session.fromPartition('persist:web');
   compat.setup(webSession, ELECTRON_UA);
   prepareSession(webSession);
+  adblock.setExceptions(data.settings.data.adblockExceptions);
 
   const blockerReady = data.settings.data.adblock
     ? adblock.setEnabled(webSession, true, onBlocked)

@@ -83,8 +83,6 @@
   function renderLayouts() {
     const current = layoutOf();
     for (const b of document.querySelectorAll('.layout')) b.classList.toggle('on', b.dataset.layout === current);
-    // Titles only matter for top tabs and the compact panel.
-    $('titlesRow').classList.toggle('off', current === 'side');
     $('tabTitles').checked = s.tabTitles !== false;
   }
   for (const b of document.querySelectorAll('.layout')) {
