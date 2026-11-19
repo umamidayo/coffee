@@ -70,6 +70,17 @@ const emit = (ev, payload) => {
 };
 
 /** Move keyboard focus out of the page and into the address bar. */
+/**
+ * Open (or step through) find in page. Like the address bar, the find box
+ * lives in the browser chrome, so keyboard focus must move there from the
+ * page first or typing would keep going to the page.
+ */
+function openFind(which = 'find:open') {
+  if (!ui || ui.isDestroyed()) return;
+  ui.focus();
+  emit(which);
+}
+
 function focusUrlbar() {
   if (!ui || ui.isDestroyed()) return;
   ui.focus();
@@ -437,8 +448,8 @@ function onInput(e, input, tab) {
     else if (key === 'd' && !shift) starBookmark();
     else if (key === 'b' && shift) toggleBookmarksBar();
     else if (key === 'j') toggleDownloads();
-    else if (key === 'f' && !shift) emit('find:open');
-    else if (key === 'g') emit(shift ? 'find:prev' : 'find:next');
+    else if (key === 'f' && !shift) openFind();
+    else if (key === 'g') openFind(shift ? 'find:prev' : 'find:next');
     else if (key === '=' || key === '+') zoom(1);
     else if (key === '-' || key === '_') zoom(-1);
     else if (key === '0') zoom(0);
@@ -1159,7 +1170,7 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: data.settings.data.bookmarksBar, action: toggleBookmarksBar },
       { label: tabsOnTop() ? 'Move tabs to the side' : 'Move tabs to the top', action: toggleTabLayout },
       { label: 'Compact sidebar', checked: compactSidebar(), disabled: tabsOnTop(), action: toggleCompact },
-      { label: 'Find in page', accel: 'Ctrl+F', action: () => emit('find:open') },
+      { label: 'Find in page', accel: 'Ctrl+F', action: () => openFind() },
       { label: 'Full screen', accel: 'F11', checked: win.isFullScreen(), action: () => win.setFullScreen(!win.isFullScreen()) },
       { sep: true },
       { label: 'Extensions', action: () => (ext ? showExtensionsPanel() : openSettings('extensions')) },
