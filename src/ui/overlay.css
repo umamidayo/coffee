@@ -15,6 +15,27 @@ html, body { background: transparent !important; height: 100%; overflow: hidden;
 
 button { background: none; border: 0; padding: 0; font: inherit; color: inherit; outline: none; }
 
+/* ---------- Compact sidebar peek ---------- */
+/* Flush with the window's left edge; the shadow only falls to the right. */
+body.t-sidebar #root { inset: 0 12px 0 0; }
+.panel.peek {
+  border-radius: 0 12px 12px 0; background: var(--bg); display: flex; flex-direction: column;
+  box-shadow: 8px 0 30px -10px rgb(0 0 0 / .5), 1px 0 0 var(--line);
+  transform-origin: left center; animation: peek-in .22s var(--ease) both;
+}
+@keyframes peek-in { from { transform: translateX(-100%); } }
+.peek-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; scrollbar-width: none; }
+.peek-scroll::-webkit-scrollbar { display: none; }
+.peek-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 36px; padding: 0 10px 0 10px;
+  border-radius: 10px; color: var(--muted); font-size: 12.5px; text-align: left;
+  transition: background .15s, color .15s;
+}
+.peek-btn svg { width: 17px; height: 17px; flex: none; }
+.peek-btn:hover { background: var(--hover); color: var(--text); }
+.peek-new { margin-top: 4px; }
+.peek-foot { padding: 6px 8px 10px; flex: none; }
+
 /* ---------- Menu ---------- */
 .menu { padding: 5px; }
 .mi {

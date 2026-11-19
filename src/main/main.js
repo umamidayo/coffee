@@ -2,7 +2,7 @@
 const path = require('path');
 const { pathToFileURL } = require('url');
 const {
-  app, BrowserWindow, session, ipcMain, protocol, net, nativeTheme, clipboard, dialog, shell,
+  app, BrowserWindow, session, ipcMain, protocol, net, nativeTheme, clipboard, dialog, shell, screen,
 } = require('electron');
 
 const data = require('./data');
@@ -45,8 +45,9 @@ const PAGES = path.join(ROOT, 'pages');
 const SIDEBAR_W = 56;
 const TOPBAR_H = 46;
 const BOOKMARKS_H = 32;
-const GUTTER = 0; // page runs to the window edges: no frame on the right/bottom
-const RADIUS = 0;
+const TABSTRIP_H = 38;  // tabs on top
+const PEEK_W = 248;     // compact sidebar panel
+const RADIUS = 0;       // page runs to the window edges: no frame
 const M = 12; // shadow margin around overlay panels (matches overlay.css)
 
 let win = null;
@@ -103,17 +104,68 @@ function bookmarksBarShown() {
   return !!data.settings.data.bookmarksBar && data.bookmarks.data.length > 0;
 }
 
+const tabsOnTop = () => data.settings.data.tabLayout === 'horizontal';
+const compactSidebar = () => !tabsOnTop() && !!data.settings.data.compactSidebar;
+
+/** Where the chrome ends and the page begins (mirrors src/ui/ui.css). */
+function chromeTop() {
+  return TOPBAR_H + (bookmarksBarShown() ? BOOKMARKS_H : 0);
+}
+
 function pageBounds() {
   const [w, h] = win.getContentSize();
   if (htmlFullscreenTab) return { bounds: { x: 0, y: 0, width: w, height: h }, radius: 0 };
-  const full = win.isFullScreen();
-  const top = TOPBAR_H + (bookmarksBarShown() ? BOOKMARKS_H : 0);
-  const g = full ? 0 : GUTTER;
+  const top = chromeTop() + (tabsOnTop() ? TABSTRIP_H : 0);
+  const left = tabsOnTop() || compactSidebar() ? 0 : SIDEBAR_W;
   return {
-    bounds: { x: SIDEBAR_W, y: top, width: Math.max(0, w - SIDEBAR_W - g), height: Math.max(0, h - top - g) },
-    radius: full ? 0 : RADIUS,
+    bounds: { x: left, y: top, width: Math.max(0, w - left), height: Math.max(0, h - top) },
+    radius: RADIUS,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Compact sidebar: the side tabs are hidden; touching the left edge of the
+// window slides a panel out over the page (in the overlay, so the page never
+// resizes). The page covers the edge, so the cursor is sampled cheaply while
+// the window is focused and compact mode is on, instead of listening for
+// mouse events.
+// ---------------------------------------------------------------------------
+
+let peekTimer = null;
+let peekArmed = true;
+
+function updatePeekWatch() {
+  const want = !!win && compactSidebar() && win.isFocused() && !htmlFullscreenTab;
+  if (want && !peekTimer) peekTimer = setInterval(peekTick, 40);
+  else if (!want && peekTimer) { clearInterval(peekTimer); peekTimer = null; }
+  if (!want && overlay && overlay.isOpen('sidebar')) overlay.close();
+}
+
+function peekTick() {
+  if (!win || win.isDestroyed()) return;
+  const p = screen.getCursorScreenPoint();
+  const b = win.getContentBounds();
+  const x = p.x - b.x;
+  const y = p.y - b.y;
+  const top = chromeTop();
+  // Edge hit: the first couple of pixels (or the resize border just outside).
+  const atEdge = x <= 2 && x >= -10 && y >= top && y <= b.height;
+  if (atEdge && peekArmed) {
+    peekArmed = false;
+    if (!overlay.isOpen() || overlay.type === 'tooltip') showPeek();
+  } else if (x > 16) {
+    peekArmed = true; // re-arm once the cursor has moved away from the edge
+  }
+}
+
+function showPeek() {
+  const [, h] = win.getContentSize();
+  const top = chromeTop();
+  overlay.open('sidebar', { x: 0, y: top, width: PEEK_W + M, height: h - top }, tabs.snapshot());
+}
+
+function toggleTabLayout() { setSetting('tabLayout', tabsOnTop() ? 'vertical' : 'horizontal'); }
+function toggleCompact() { setSetting('compactSidebar', !data.settings.data.compactSidebar); }
 
 function layout() {
   const tab = tabs && tabs.active;
@@ -158,7 +210,7 @@ function createWindow() {
   ui.loadFile(path.join(ROOT, 'ui', 'index.html'));
   if (s.maximized) win.maximize();
 
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => { win.show(); updatePeekWatch(); });
 
   overlay = new Overlay(win, UI_PRELOAD);
   overlay.onState = (type) => emit('overlay', type);
@@ -172,9 +224,10 @@ function createWindow() {
   const sendState = () => { layout(); emit('window', windowState()); };
   win.on('resize', layout);
   for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(ev, sendState);
-  win.on('focus', () => emit('window', windowState()));
+  win.on('focus', () => { emit('window', windowState()); updatePeekWatch(); });
   win.on('blur', () => {
     emit('window', windowState());
+    updatePeekWatch();
     if (overlay.type !== 'suggest') overlay.close();
   });
 
@@ -201,6 +254,7 @@ function createWindow() {
     layout,
     render: (snap) => {
       emit('tabs', snap);
+      overlay.update('sidebar', snap);
       // Session snapshots walk every tab's history, so keep them rare.
       clearTimeout(sessionTimer);
       sessionTimer = setTimeout(() => tabs && tabs.saveSession(), 2000);
@@ -230,6 +284,7 @@ function createWindow() {
     htmlFullscreen: (tab, on) => {
       htmlFullscreenTab = on ? tab : null;
       win.setFullScreen(on);
+      updatePeekWatch();
       layout();
       emit('window', windowState());
     },
@@ -319,6 +374,8 @@ function publicSettings() {
   return {
     bookmarksBar: s.bookmarksBar,
     bookmarksBarShown: bookmarksBarShown(),
+    tabLayout: tabsOnTop() ? 'horizontal' : 'vertical',
+    compactSidebar: !!data.settings.data.compactSidebar,
     adblock: s.adblock,
     searchEngine: s.searchEngine,
     update: updater.status,
@@ -677,6 +734,16 @@ function setSetting(key, value) {
       s.bookmarksBar = !!value;
       layout();
       break;
+    case 'tabLayout':
+      s.tabLayout = value === 'horizontal' ? 'horizontal' : 'vertical';
+      layout();
+      updatePeekWatch();
+      break;
+    case 'compactSidebar':
+      s.compactSidebar = !!value;
+      layout();
+      updatePeekWatch();
+      break;
     case 'sleepMinutes':
       s.sleepMinutes = [0, 5, 15, 30, 60, 120].includes(Number(value)) ? Number(value) : 30;
       break;
@@ -705,6 +772,8 @@ function settingsPayload() {
     engines: Object.entries(data.SEARCH_ENGINES).map(([id, e]) => ({ id, name: e.name })),
     adblock: s.adblock,
     bookmarksBar: s.bookmarksBar,
+    tabLayout: s.tabLayout,
+    compactSidebar: !!s.compactSidebar,
     sleepMinutes: s.sleepMinutes,
     restoreSession: s.restoreSession,
     theme: s.theme,
@@ -832,6 +901,8 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       { sep: true },
       { label: 'Downloads', accel: 'Ctrl+J', action: () => toggleDownloads() },
       { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: data.settings.data.bookmarksBar, action: toggleBookmarksBar },
+      { label: tabsOnTop() ? 'Move tabs to the side' : 'Move tabs to the top', action: toggleTabLayout },
+      { label: 'Compact sidebar', checked: compactSidebar(), disabled: tabsOnTop(), action: toggleCompact },
       { label: 'Find in page', accel: 'Ctrl+F', action: () => emit('find:open') },
       { label: 'Full screen', accel: 'F11', checked: win.isFullScreen(), action: () => win.setFullScreen(!win.isFullScreen()) },
       { sep: true },

@@ -1,15 +1,24 @@
 /* Browser chrome. Metrics must match src/main/main.js:
-   SIDEBAR_W 56 · TOPBAR_H 46 · BOOKMARKS_H 32 · GUTTER 0 · RADIUS 0 */
+   SIDEBAR_W 56 · TOPBAR_H 46 · BOOKMARKS_H 32 · TABSTRIP_H 38
+
+   Layout, top to bottom: title bar (full width), bookmarks bar (only when
+   there are bookmarks), then either the top tab strip (tabs-top) or the
+   sidebar on the left (tabs-side; hidden in compact mode), then the page. */
 :root {
   --side-w: 56px;
   --top-h: 46px;
-  --bm-h: 32px;
-  --gutter: 0px;
-  --radius: 0px;
-  --page-top: calc(var(--top-h) + var(--bm-h));
+  --strip-h: 38px;
 }
-body.no-bookmarks { --page-top: var(--top-h); }
-body.fullscreen { --gutter: 0px; --radius: 0px; }
+/* Derived values live on body, so body classes (e.g. no-bookmarks) feed into them. */
+body {
+  --bm-h: 32px;
+  --chrome-top: calc(var(--top-h) + var(--bm-h));
+  --page-top: var(--chrome-top);
+  --page-left: var(--side-w);
+}
+body.no-bookmarks { --bm-h: 0px; }
+body.tabs-top { --page-top: calc(var(--chrome-top) + var(--strip-h)); --page-left: 0px; }
+body.tabs-side.compact { --page-left: 0px; }
 
 html, body { height: 100%; overflow: hidden; user-select: none; }
 body { background: var(--bg); cursor: default; }
@@ -21,18 +30,13 @@ button { background: none; border: 0; padding: 0; outline: none; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
 svg { display: block; }
 
-/* ---------- Sidebar (vertical icon tabs) ---------- */
+/* ---------- Sidebar (tabs on the side) ---------- */
 
 #sidebar {
-  position: fixed; left: 0; top: 0; bottom: 0; width: var(--side-w);
+  position: fixed; left: 0; top: var(--chrome-top); bottom: 0; width: var(--side-w);
   display: flex; flex-direction: column; align-items: center;
 }
-.brand {
-  height: var(--top-h); width: 100%; flex: none;
-  display: grid; place-items: center; color: var(--accent);
-}
-.brand svg { width: 22px; height: 22px; transition: transform .5s var(--spring); }
-.brand:hover svg { transform: rotate(-8deg) scale(1.06); }
+body.tabs-top #sidebar, body.compact #sidebar { display: none; }
 
 #tabs-scroll {
   flex: 1; width: 100%; overflow-y: auto; overflow-x: hidden;
@@ -43,89 +47,6 @@ svg { display: block; }
 }
 #tabs-scroll::-webkit-scrollbar { display: none; }
 
-#tabs { position: relative; display: flex; flex-direction: column; gap: 4px; width: 40px; }
-
-#tab-highlight {
-  position: absolute; left: 0; top: 0; width: 40px; height: 40px; border-radius: 12px;
-  background: var(--surface);
-  box-shadow: 0 1px 2px rgb(0 0 0 / .18), inset 0 0 0 1px var(--line);
-  transition: transform .32s var(--spring), opacity .2s;
-  pointer-events: none; opacity: 0;
-}
-#tab-highlight.on { opacity: 1; }
-
-.tab {
-  position: relative; width: 40px; height: 40px; flex: none; border-radius: 12px;
-  display: grid; place-items: center; z-index: 1;
-  transition: background .15s, opacity .2s;
-}
-.tab:hover { background: var(--hover); }
-.tab.active:hover { background: transparent; }
-.tab:active:not(.dragging) .tab-icon { transform: scale(.9); }
-
-.tab-icon {
-  width: 18px; height: 18px; display: grid; place-items: center;
-  transition: transform .2s var(--spring), opacity .25s, filter .25s;
-}
-.tab-icon img { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; }
-.tab-icon .letter {
-  width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center;
-  font: 600 10.5px/1 var(--font); color: var(--on-accent); background: var(--accent);
-}
-.tab-icon .glyph { width: 18px; height: 18px; color: var(--muted); }
-.tab-icon .glyph svg { width: 18px; height: 18px; }
-.tab.active .tab-icon .glyph { color: var(--accent); }
-
-.tab.sleeping .tab-icon { opacity: .42; filter: grayscale(1); }
-
-/* Loading ring */
-.tab .spinner {
-  position: absolute; inset: 5px; width: 30px; height: 30px; opacity: 0;
-  transition: opacity .25s; pointer-events: none;
-}
-.tab .spinner circle {
-  fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
-  stroke-dasharray: 30 64; transform-origin: center;
-}
-.tab.loading .spinner { opacity: 1; }
-.tab.loading .spinner circle { animation: spin .9s linear infinite; }
-.tab.loading .tab-icon { transform: scale(.82); }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* Audio badge */
-.tab .audio {
-  position: absolute; right: 1px; bottom: 1px; width: 15px; height: 15px; border-radius: 50%;
-  background: var(--bg); color: var(--text); display: none; place-items: center;
-  box-shadow: 0 0 0 1px var(--line);
-}
-.tab .audio svg { width: 10px; height: 10px; }
-.tab.audible .audio, .tab.muted .audio { display: grid; }
-.tab.muted .audio { color: var(--muted); }
-
-/* Close button */
-.tab .tab-close {
-  position: absolute; top: -3px; right: -3px; width: 16px; height: 16px; border-radius: 50%;
-  display: grid; place-items: center; background: var(--raised); color: var(--muted);
-  box-shadow: 0 1px 3px rgb(0 0 0 / .3), 0 0 0 1px var(--line);
-  opacity: 0; transform: scale(.6); transition: opacity .15s, transform .2s var(--spring);
-}
-.tab .tab-close svg { width: 10px; height: 10px; }
-.tab .tab-close:hover { color: var(--text); background: var(--surface); }
-.tab:hover .tab-close { opacity: 1; transform: scale(1); }
-.tab.dragging .tab-close { opacity: 0; }
-
-/* Tab enter / leave / drag */
-.tab.entering { animation: tab-in .42s var(--spring) both; }
-@keyframes tab-in {
-  from { opacity: 0; transform: scale(.4); }
-  to   { opacity: 1; transform: none; }
-}
-.tab.leaving { pointer-events: none; animation: tab-out .2s var(--ease) both; }
-@keyframes tab-out { to { opacity: 0; transform: scale(.5); } }
-.tab.dragging { z-index: 5; transition: none; }
-.tab.dragging .tab-icon { transform: scale(1.12); }
-#tabs.drag-active .tab:not(.dragging) { transition: background .15s; }
-
 .side-btn {
   width: 40px; height: 40px; flex: none; border-radius: 12px; display: grid; place-items: center;
   color: var(--muted); transition: background .15s, color .15s, transform .2s var(--spring);
@@ -134,15 +55,39 @@ svg { display: block; }
 .side-btn:hover { background: var(--hover); color: var(--text); }
 .side-btn:active { transform: scale(.9); }
 #new-tab { margin-top: 4px; }
-#new-tab:hover svg { transform: rotate(90deg); }
-#new-tab svg { transition: transform .35s var(--spring); }
+#new-tab svg, #new-tab-top svg { transition: transform .35s var(--spring); }
+#new-tab:hover svg, #new-tab-top:hover svg { transform: rotate(90deg); }
 .side-bottom { padding: 6px 0 10px; flex: none; }
+
+/* ---------- Tab strip (tabs on top) ---------- */
+
+#tabstrip {
+  position: fixed; left: 0; right: 0; top: var(--chrome-top); height: var(--strip-h);
+  display: none; align-items: center; gap: 4px; padding: 0 8px 4px;
+}
+body.tabs-top #tabstrip { display: flex; }
+#htabs-scroll {
+  flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+#htabs-scroll::-webkit-scrollbar { display: none; }
+/* Tabs grow to 220px each and the + button follows the last tab. */
+#htabs { flex: 1 1 auto; min-width: 0; }
+/* Empty strip space drags the window; tabs and the + button don't. */
+#htabs .tab, #new-tab-top { -webkit-app-region: no-drag; }
+.strip-btn {
+  width: 30px; height: 30px; flex: none; border-radius: 9px; display: grid; place-items: center;
+  color: var(--muted); transition: background .15s, color .15s, transform .2s var(--spring);
+}
+.strip-btn svg { width: 16px; height: 16px; }
+.strip-btn:hover { background: var(--hover); color: var(--text); }
+.strip-btn:active { transform: scale(.9); }
 
 /* ---------- Top bar (custom title bar + omnibox) ---------- */
 
 #topbar {
-  position: fixed; left: var(--side-w); right: 0; top: 0; height: var(--top-h);
-  display: flex; align-items: center; gap: 6px; padding-left: 2px;
+  position: fixed; left: 0; right: 0; top: 0; height: var(--top-h);
+  display: flex; align-items: center; gap: 6px; padding-left: 10px;
 }
 .nav, .actions { display: flex; gap: 2px; flex: none; }
 .icon-btn {
@@ -268,14 +213,15 @@ svg { display: block; }
 body.fullscreen .winctl { display: none; }
 body.fullscreen #topbar { padding-right: 8px; }
 
-body.blurred #sidebar, body.blurred #topbar > :not(.winctl), body.blurred #bookmarks-bar { opacity: .72; }
-#sidebar, #topbar > *, #bookmarks-bar { transition: opacity .25s; }
+body.blurred #sidebar, body.blurred #tabstrip, body.blurred #topbar > :not(.winctl), body.blurred #bookmarks-bar { opacity: .72; }
+#sidebar, #tabstrip, #topbar > *, #bookmarks-bar { transition: opacity .25s; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- Bookmarks bar ---------- */
 
 #bookmarks-bar {
-  position: fixed; left: var(--side-w); right: var(--gutter); top: var(--top-h); height: var(--bm-h);
-  display: flex; align-items: center; gap: 2px; padding: 0 2px 4px; overflow: hidden;
+  position: fixed; left: 0; right: 0; top: var(--top-h); height: var(--bm-h);
+  display: flex; align-items: center; gap: 2px; padding: 0 8px 4px; overflow: hidden;
 }
 body.no-bookmarks #bookmarks-bar { display: none; }
 .bm {
@@ -296,7 +242,7 @@ body.no-bookmarks #bookmarks-bar { display: none; }
 /* ---------- Loading bar & page slot ---------- */
 
 #loading-bar {
-  position: fixed; left: calc(var(--side-w) + 8px); right: calc(var(--gutter) + 8px);
+  position: fixed; left: calc(var(--page-left) + 8px); right: 8px;
   top: calc(var(--page-top) - 3px); height: 2px; border-radius: 2px; overflow: hidden;
   pointer-events: none; opacity: 0; transition: opacity .35s .1s;
 }
@@ -314,7 +260,7 @@ body.no-bookmarks #bookmarks-bar { display: none; }
 }
 
 #page-slot {
-  position: fixed; left: var(--side-w); top: var(--page-top); right: var(--gutter); bottom: var(--gutter);
-  border-radius: var(--radius); background: var(--surface);
+  position: fixed; left: var(--page-left); top: var(--page-top); right: 0; bottom: 0;
+  background: var(--surface);
 }
 body.html-fullscreen #page-slot { inset: 0; border-radius: 0; }

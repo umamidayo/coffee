@@ -195,7 +195,34 @@
     requestAnimationFrame(() => p.querySelector('#pm-allow').focus());
   }
 
+  // ---------- compact sidebar peek ----------
+  let peekStrip = null;
+  let peekLeave = null;
+  function renderSidebar(data) {
+    const p = panel('peek');
+    p.innerHTML = `<div class="peek-scroll"><div class="peek-tabs"></div>
+        <button class="peek-btn peek-new">${Icons.plus}<span>New tab</span></button></div>
+      <div class="peek-foot"><button class="peek-btn peek-settings">${Icons.settings}<span>Settings</span></button></div>`;
+    // Activate on click (not pointerdown) so tabs can still be dragged here.
+    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles: true, activateOn: 'click' });
+    peekStrip.render(data);
+    p.querySelector('.peek-new').onclick = () => api.send('tab:new');
+    p.querySelector('.peek-settings').onclick = () => api.send('settings:open');
+    p.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.tab')) return;
+      e.preventDefault();
+      api.send('sidebar:menu', { x: e.clientX, y: e.clientY });
+    });
+    // Slide away shortly after the mouse leaves (not mid-drag).
+    p.addEventListener('mouseleave', () => {
+      clearTimeout(peekLeave);
+      peekLeave = setTimeout(() => { if (!peekStrip || !peekStrip.dragging) close(); }, 280);
+    });
+    p.addEventListener('mouseenter', () => clearTimeout(peekLeave));
+  }
+
   const renderers = {
+    sidebar: renderSidebar,
     menu: renderMenu,
     suggest: renderSuggest,
     tooltip: renderTip,
@@ -204,8 +231,15 @@
     permission: renderPermission,
   };
 
+  function dropPeek() {
+    clearTimeout(peekLeave);
+    if (peekStrip) { peekStrip.destroy(); peekStrip = null; }
+  }
+
   api.on('overlay:show', ({ type, data, reopen }) => {
     keyHandler = null;
+    dropPeek();
+    document.body.className = `t-${type}`;
     current = { type, data };
     const fn = renderers[type];
     if (fn) fn(data, reopen);
@@ -214,8 +248,10 @@
     if (!current || current.type !== type) return;
     current.data = data;
     if (type === 'downloads') renderDownloads(data, true);
+    if (type === 'sidebar' && peekStrip) peekStrip.render(data);
   });
   api.on('overlay:hide', () => {
+    dropPeek();
     current = null;
     keyHandler = null;
     root.textContent = '';

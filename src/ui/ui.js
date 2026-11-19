@@ -21,8 +21,8 @@
   const active = () => state.tabs.find((t) => t.id === state.activeId) || null;
 
   // ---------- static icons ----------
-  $('brand').innerHTML = Icons.logo;
   $('new-tab').innerHTML = Icons.plus;
+  $('new-tab-top').innerHTML = Icons.plus;
   $('settings-btn').innerHTML = Icons.settings;
   $('back').innerHTML = Icons.back;
   $('forward').innerHTML = Icons.forward;
@@ -76,204 +76,46 @@
   api.on('window', applyWindow);
 
   // =====================================================================
-  // Tabs
+  // Tabs: a side strip (icons) or a top strip (icons + titles)
   // =====================================================================
-  const tabsEl = $('tabs');
-  const highlight = $('tab-highlight');
-  const tabNodes = new Map(); // id -> element
-  const SPINNER = '<svg class="spinner" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14"/></svg>';
-
-  function letterFor(t) {
-    try { return new URL(t.url).hostname.replace(/^www\./, '').charAt(0).toUpperCase() || '•'; } catch { return (t.title || '•').charAt(0).toUpperCase(); }
-  }
-
-  function iconMarkup(t) {
-    if (t.newtab) return `<span class="glyph">${Icons.sparkle}</span>`;
-    if (t.internal) return `<span class="glyph">${Icons.settings}</span>`;
-    if (t.favicon) return `<img src="${encodeURI(t.favicon)}" alt="" draggable="false">`;
-    if (t.url) return `<span class="letter">${letterFor(t)}</span>`;
-    return `<span class="glyph">${Icons.globe}</span>`;
-  }
-
-  function createTabNode(t) {
-    const n = el('div', 'tab entering');
-    n.dataset.id = t.id;
-    n.innerHTML = `<div class="tab-icon"></div>${SPINNER}<span class="audio"></span><button class="tab-close" tabindex="-1" aria-label="Close tab">${Icons.close}</button>`;
-    n.addEventListener('animationend', () => n.classList.remove('entering'), { once: true });
-    n._icon = n.firstChild;
-    n._audio = n.querySelector('.audio');
-    n._iconKey = '';
-    bindTab(n);
-    return n;
-  }
-
-  function updateTabNode(n, t) {
-    const key = t.newtab ? 'new' : t.internal ? 'int' : t.favicon || `l:${t.url}`;
-    if (key !== n._iconKey) {
-      n._iconKey = key;
-      n._icon.innerHTML = iconMarkup(t);
-      const img = n._icon.querySelector('img');
-      if (img) img.onerror = () => { n._icon.innerHTML = `<span class="letter">${letterFor(t)}</span>`; };
-    }
-    n.classList.toggle('active', t.id === state.activeId);
-    n.classList.toggle('loading', t.loading && !t.newtab);
-    n.classList.toggle('sleeping', t.sleeping && t.id !== state.activeId);
-    n.classList.toggle('audible', t.audible && !t.muted);
-    n.classList.toggle('muted', t.muted);
-    if (t.audible || t.muted) n._audio.innerHTML = t.muted ? Icons.mute : Icons.volume;
-    n._title = t.title;
-  }
-
-  /** FLIP: animate siblings from their old position to the new one. */
-  function flip(mutate, skip) {
-    const before = new Map();
-    for (const n of tabsEl.querySelectorAll('.tab:not(.leaving)')) if (n !== skip) before.set(n, n.offsetTop);
-    mutate();
-    for (const [n, top] of before) {
-      if (!n.isConnected || n.classList.contains('leaving')) continue;
-      const dy = top - n.offsetTop;
-      if (!dy) continue;
-      n.style.transition = 'none';
-      n.style.transform = `translateY(${dy}px)`;
-      requestAnimationFrame(() => {
-        n.style.transition = 'transform .3s var(--spring), background .15s';
-        n.style.transform = '';
-      });
-    }
-  }
+  const sideStrip = new window.TabStrip($('tabs'), {
+    api, orientation: 'vertical', titles: false,
+    onHover: (n) => showTip(n), onLeave: () => hideTip(),
+  });
+  const topStrip = new window.TabStrip($('htabs'), { api, orientation: 'horizontal', titles: true });
+  let tabLayout = 'vertical';
+  const strip = () => (tabLayout === 'horizontal' ? topStrip : sideStrip);
 
   function renderTabs() {
-    if (drag && drag.active) { pendingRender = true; return; }
-    const ids = new Set(state.tabs.map((t) => t.id));
-    flip(() => {
-      for (const [id, n] of tabNodes) {
-        if (ids.has(id)) continue;
-        tabNodes.delete(id);
-        // Leave the flow immediately so neighbours slide into place.
-        n.classList.add('leaving');
-        n.style.position = 'absolute';
-        n.style.top = `${n.offsetTop}px`;
-        setTimeout(() => n.remove(), 220);
-      }
-      let prev = highlight;
-      for (const t of state.tabs) {
-        let n = tabNodes.get(t.id);
-        if (!n) { n = createTabNode(t); tabNodes.set(t.id, n); }
-        updateTabNode(n, t);
-        if (prev.nextSibling !== n) prev.after(n);
-        prev = n;
-      }
-      // Leaving nodes are absolutely positioned; keep them after live tabs.
-      for (const n of tabsEl.querySelectorAll('.tab.leaving')) tabsEl.appendChild(n);
-    });
-    moveHighlight();
+    // Only the visible strip is kept up to date.
+    strip().render({ tabs: state.tabs, activeId: state.activeId });
   }
 
-  function moveHighlight() {
-    const n = tabNodes.get(state.activeId);
-    if (!n) { highlight.classList.remove('on'); return; }
-    const y = n.offsetTop;
-    if (!highlight.classList.contains('on')) {
-      highlight.style.transition = 'none';
-      highlight.style.transform = `translateY(${y}px)`;
-      void highlight.offsetTop;
-      highlight.style.transition = '';
-      highlight.classList.add('on');
-    } else {
-      highlight.style.transform = `translateY(${y}px)`;
+  function applyLayout(s) {
+    const layout = s.tabLayout === 'horizontal' ? 'horizontal' : 'vertical';
+    document.body.classList.toggle('tabs-top', layout === 'horizontal');
+    document.body.classList.toggle('tabs-side', layout === 'vertical');
+    document.body.classList.toggle('compact', layout === 'vertical' && !!s.compactSidebar);
+    if (layout !== tabLayout) {
+      tabLayout = layout;
+      renderTabs();
+      requestAnimationFrame(() => strip().relayout());
     }
-    if (!drag || !drag.active) n.scrollIntoView({ block: 'nearest' });
   }
-
-  // ---------- tab interactions: click, middle-click, menu, drag ----------
-  let drag = null;
-  let pendingRender = false;
-
-  function bindTab(n) {
-    const id = () => Number(n.dataset.id);
-    n.addEventListener('pointerdown', (e) => {
-      if (e.target.closest('.tab-close')) return;
-      if (e.button === 0) {
-        if (id() !== state.activeId) {
-          state.activeId = id();
-          for (const [tid, node] of tabNodes) node.classList.toggle('active', tid === state.activeId);
-          moveHighlight();
-          api.send('tab:activate', { id: id() });
-        }
-        drag = { node: n, id: id(), startY: e.clientY, grab: e.clientY - n.getBoundingClientRect().top, active: false, pointer: e.pointerId };
-      }
-    });
-    n.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); api.send('tab:close', { id: id() }); } });
-    n.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
-    n.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); api.send('tab:close', { id: id() }); });
-    n._audio.addEventListener('pointerdown', (e) => { e.stopPropagation(); api.send('tab:mute', { id: id() }); });
-    n.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      hideTip();
-      api.send('tab:menu', { id: id(), x: e.clientX, y: e.clientY });
-    });
-    n.addEventListener('mouseenter', () => showTip(n));
-    n.addEventListener('mouseleave', hideTip);
-  }
-
-  window.addEventListener('pointermove', (e) => {
-    if (!drag) return;
-    if (!drag.active) {
-      if (Math.abs(e.clientY - drag.startY) < 5) return;
-      drag.active = true;
-      hideTip();
-      drag.node.classList.add('dragging');
-      tabsEl.classList.add('drag-active');
-      try { drag.node.setPointerCapture(drag.pointer); } catch { /* ignore */ }
-    }
-    const live = [...tabsEl.querySelectorAll('.tab:not(.leaving)')];
-    const base = tabsEl.getBoundingClientRect().top;
-    const slot = 44;
-    const from = live.indexOf(drag.node);
-    const to = Math.max(0, Math.min(live.length - 1, Math.round((e.clientY - drag.grab - base) / slot)));
-    if (to !== from) {
-      flip(() => {
-        const others = live.filter((x) => x !== drag.node);
-        if (to >= others.length) others[others.length - 1].after(drag.node);
-        else others[to].before(drag.node);
-      }, drag.node);
-    }
-    const natural = base + drag.node.offsetTop;
-    drag.node.style.transform = `translateY(${e.clientY - drag.grab - natural}px)`;
-    moveHighlight();
-  });
-
-  window.addEventListener('pointerup', () => {
-    if (!drag) return;
-    const d = drag;
-    drag = null;
-    if (!d.active) return;
-    const live = [...tabsEl.querySelectorAll('.tab:not(.leaving)')];
-    const index = live.indexOf(d.node);
-    d.node.style.transition = 'transform .28s var(--spring)';
-    d.node.style.transform = '';
-    d.node.classList.remove('dragging');
-    tabsEl.classList.remove('drag-active');
-    setTimeout(() => { d.node.style.transition = ''; }, 300);
-    // Reflect locally right away; main confirms with a fresh snapshot.
-    const t = state.tabs.find((x) => x.id === d.id);
-    state.tabs = state.tabs.filter((x) => x.id !== d.id);
-    state.tabs.splice(index, 0, t);
-    api.send('tab:move', { id: d.id, index });
-    if (pendingRender) { pendingRender = false; renderTabs(); }
-    moveHighlight();
-  });
 
   $('new-tab').onclick = () => api.send('tab:new');
+  $('new-tab-top').onclick = () => api.send('tab:new');
   $('update-btn').onclick = () => api.send('update:install');
 
-  // Right-click empty sidebar space: new tab / reopen recently closed tabs.
-  $('sidebar').addEventListener('contextmenu', (e) => {
-    if (e.target.closest('.tab')) return;
-    e.preventDefault();
-    hideTip();
-    api.send('sidebar:menu', { x: e.clientX, y: e.clientY });
-  });
+  // Right-click empty tab space: new tab / reopen recently closed tabs.
+  for (const area of [$('sidebar'), $('tabstrip')]) {
+    area.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.tab')) return;
+      e.preventDefault();
+      hideTip();
+      api.send('sidebar:menu', { x: e.clientX, y: e.clientY });
+    });
+  }
   $('settings-btn').onclick = () => api.send('settings:open');
 
   // ---------- tooltips (rendered in the overlay so they float over the page) ----------
@@ -283,7 +125,7 @@
   let tipWarm = 0;
   function showTip(n) {
     clearTimeout(tipTimer);
-    if (drag && drag.active) return;
+    if (sideStrip.dragging) return;
     const delay = Date.now() - tipWarm < 600 ? 0 : 450;
     tipTimer = setTimeout(() => {
       if (!n.matches(':hover') || !n.isConnected) return;
@@ -602,6 +444,7 @@
   function applySettings(s) {
     state.settings = s;
     document.body.classList.toggle('no-bookmarks', !s.bookmarksBarShown);
+    applyLayout(s);
     const up = s.update || {};
     $('update-btn').hidden = up.state !== 'ready';
     if (up.version) $('update-btn').title = `Coffee ${up.version} is ready — restart to install`;
@@ -629,7 +472,12 @@
   api.on('bookmarks', (b) => { state.bookmarks = b; renderBookmarks(); renderOmni(); });
   api.on('settings', applySettings);
 
-  window.addEventListener('resize', sendOmniRect);
+  let relayoutRaf = 0;
+  window.addEventListener('resize', () => {
+    sendOmniRect();
+    cancelAnimationFrame(relayoutRaf);
+    relayoutRaf = requestAnimationFrame(() => strip().relayout());
+  });
 
   api.invoke('init').then((d) => {
     state.bookmarks = d.bookmarks;

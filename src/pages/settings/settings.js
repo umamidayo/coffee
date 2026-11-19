@@ -79,6 +79,13 @@
     engine.innerHTML = s.engines.map((e) => `<option value="${e.id}">${e.name}</option>`).join('');
     engine.value = s.searchEngine;
     $('bookmarksBar').checked = s.bookmarksBar;
+    for (const b of document.querySelectorAll('#tabLayout button')) {
+      const on = b.dataset.v === (s.tabLayout || 'vertical');
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
+    $('compactSidebar').checked = !!s.compactSidebar;
+    $('compactRow').classList.toggle('disabled', s.tabLayout === 'horizontal');
     $('restoreSession').checked = s.restoreSession;
     $('adblock').checked = s.adblock;
     $('blocked').textContent = `${s.blockedTotal.toLocaleString()} ads and trackers blocked so far`;
@@ -111,6 +118,8 @@
 
   $('engine').onchange = (e) => set('searchEngine', e.target.value);
   $('bookmarksBar').onchange = (e) => set('bookmarksBar', e.target.checked);
+  for (const b of document.querySelectorAll('#tabLayout button')) b.onclick = () => set('tabLayout', b.dataset.v);
+  $('compactSidebar').onchange = (e) => set('compactSidebar', e.target.checked);
   $('restoreSession').onchange = (e) => set('restoreSession', e.target.checked);
   $('adblock').onchange = (e) => set('adblock', e.target.checked);
   $('sleepMinutes').onchange = (e) => set('sleepMinutes', Number(e.target.value));

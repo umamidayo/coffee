@@ -26,7 +26,8 @@ The installer is per-user (no admin needed) and registers Coffee as a browser, s
 ## Features
 
 - **Frameless window.** A custom title bar holds navigation, the address bar and window controls in one 46px row, so nearly the whole screen is the page.
-- **Vertical icon tabs.** Drag to reorder, middle-click to close, right-click a tab for its menu, right-click empty space to reopen recently closed tabs, hover for the title. Tabs show a loading ring and an audio badge (click the badge to mute).
+- **Tabs on the side or on top.** Side tabs are compact icons; top tabs show titles under the bookmarks bar (Settings → Tabs, or the ⋮ menu). Drag to reorder, middle-click to close, right-click a tab for its menu, right-click empty space to reopen recently closed tabs. Tabs show a loading ring and an audio badge (click the badge to mute).
+- **Compact sidebar.** Hides the side tabs so the page gets the full width; touch the left edge of the window and a panel with your tabs slides out over the page (it never resizes the page) and hides again when you move away.
 - **Ad and tracker blocking, the uBlock Origin way.** Coffee uses uBO's own default filter lists (uBlock filters, quick fixes, badware, privacy, unbreak, resource abuse, EasyList, EasyPrivacy, Peter Lowe), fetched from uBO's servers with its `!#include`/`!#if` directives resolved. It also uses uBO's own scriptlet library, converted from uBO's source at its latest stable release by `npm run scriptlets` (this runs automatically before `dist`/`release`, and the converter only parses uBO's code, never runs it). Scriptlets are injected synchronously into the page's main world at document start in every frame, before any page script, the same way uBO does it. Scriptlet timing and version are what defeat YouTube's ads and its anti-adblock slowdown. Lists refresh every 6 hours in the background. The shield in the address bar shows a per-page count.
 - **Downloads** go straight to your downloads folder. The panel has progress, speed, pause/resume and show in folder.
 - **Bookmarks.** Use the star or Ctrl+D, then rename inline. Bookmarks appear in the bookmarks bar and on the new tab page.
@@ -65,12 +66,12 @@ The installer is per-user (no admin needed) and registers Coffee as a browser, s
 ```
 src/main/      main process: window, layout, tabs, overlay, ad-block, compat, downloads, data, themes, updater
 src/preload/   ui.js (browser chrome + overlay), internal.js (coffee:// pages only), adblock.js + compat.js (every web frame)
-src/ui/        browser chrome (index.html) and popup layer (overlay.html)
+src/ui/        browser chrome (index.html), popup layer (overlay.html), shared tab strip (tabstrip.js)
 src/pages/     coffee://newtab, coffee://settings, coffee://error, shared theme tokens
 build/         app icon + installer.nsh (default-browser registration)
 ```
 
-Layout metrics (sidebar 56px, top bar 46px, bookmarks bar 32px; the page runs to the right and bottom window edges) are defined in both `src/main/main.js` and `src/ui/ui.css`. Change them together.
+Layout metrics (sidebar 56px, top bar 46px, bookmarks bar 32px, top tab strip 38px; the page runs to the window edges) are defined in both `src/main/main.js` and `src/ui/ui.css`. Change them together.
 
 ## License
 

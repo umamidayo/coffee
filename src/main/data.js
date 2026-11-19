@@ -15,6 +15,8 @@ const settings = new Store('settings', {
   searchEngine: 'google',
   adblock: true,
   bookmarksBar: true,
+  tabLayout: 'vertical',   // 'vertical' (side) | 'horizontal' (top)
+  compactSidebar: false,   // side tabs hidden until the mouse reaches the left edge
   sleepMinutes: 30,
   restoreSession: true,
   theme: { preset: 'coffee', custom: null },
