@@ -183,6 +183,8 @@ class Tab {
     wc.on('context-menu', (_e, params) => mgr.hooks.contextMenu(this, params));
     wc.on('before-input-event', (e, input) => mgr.hooks.input(e, input, this));
     wc.on('focus', () => mgr.hooks.pageFocus(this));
+    // Clicking into the page ends the "keep the address bar focused" window.
+    wc.on('before-mouse-event', (_e, mouse) => { if (mouse.type === 'mouseDown') this.urlbarUntil = 0; });
     wc.on('zoom-changed', (_e, dir) => mgr.hooks.zoom(this, dir === 'in' ? 1 : -1));
 
     // Web content may not navigate to (or frame) coffee:// pages; only the

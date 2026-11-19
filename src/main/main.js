@@ -27,6 +27,9 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'coffee', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
 ]);
 
+// Electron's honest user agent, kept for Google sign-in (see compat.js).
+const ELECTRON_UA = app.userAgentFallback;
+
 // Present as a normal Chrome so sites don't serve degraded pages.
 app.userAgentFallback = app.userAgentFallback
   .replace(/\sElectron\/\S+/, '')
@@ -205,10 +208,20 @@ function createWindow() {
     activated: (tab) => {
       if (overlay.isOpen()) overlay.close();
       if (tab.url.startsWith(NEWTAB)) {
-        // The fresh page grabs focus once it loads; keep the address bar
-        // focused through that so you can type immediately.
+        // A freshly shown page takes keyboard focus as it attaches and loads,
+        // without a 'focus' event, so keep handing focus back to the address
+        // bar while it settles (until you type there or click the page).
         tab.urlbarUntil = Date.now() + 2500;
         focusUrlbar();
+        const reclaim = () => {
+          if (tab !== tabs.active || !(tab.urlbarUntil > Date.now()) || !ui || ui.isDestroyed()) return;
+          if (!ui.isFocused()) focusUrlbar();
+        };
+        for (const ms of [30, 120, 300, 700]) setTimeout(reclaim, ms);
+        if (tab.wc) {
+          tab.wc.once('dom-ready', reclaim);
+          tab.wc.once('did-finish-load', () => { reclaim(); setTimeout(reclaim, 50); });
+        }
       }
       else if (tab.wc) tab.wc.focus();
       emit('find:close');
@@ -932,7 +945,7 @@ app.whenReady().then(async () => {
   webSession.setUserAgent(app.userAgentFallback);
   webSession.setSpellCheckerLanguages(['en-US']);
   registerInternalProtocol(webSession);
-  compat.setup(webSession);
+  compat.setup(webSession, ELECTRON_UA);
   setupPermissions(webSession);
 
   const blockerReady = data.settings.data.adblock

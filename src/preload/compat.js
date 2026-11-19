@@ -14,7 +14,8 @@ const { ipcRenderer, webFrame } = require('electron');
   // page. Report autofill as unavailable and let conditional requests wait
   // silently (until the page aborts them), exactly like a browser without the
   // feature. Explicit passkey sign-in still goes to Windows Hello as normal.
-  let code = `(() => {
+  const scripts = [];
+  scripts.push(`(() => {
     const PKC = window.PublicKeyCredential;
     if (PKC) {
       if (PKC.isConditionalMediationAvailable) {
@@ -51,29 +52,26 @@ const { ipcRenderer, webFrame } = require('electron');
         configurable: true, writable: true,
       });
     }
-  })();`;
+  })();`);
 
   // --- Google sign-in identity -------------------------------------------------
-  // On Google's sign-in pages only, make navigator.* match the Firefox identity
-  // that main/compat.js sends in the request headers.
-  if (location.hostname === 'accounts.google.com') {
+  // On Google's sign-in hosts, main/compat.js sends Electron's honest user
+  // agent; make navigator.userAgent / appVersion say the same thing. Nothing
+  // else is touched: client hints, vendor, etc. are already genuine Chromium.
+  if (location.hostname === 'accounts.google.com' || location.hostname === 'accounts.youtube.com') {
     let id = null;
     try { id = ipcRenderer.sendSync('compat:identity'); } catch { /* ignore */ }
     if (id) {
-      code += `(() => {
+      scripts.push(`(() => {
         const N = Navigator.prototype;
-        const def = (k, v) => Object.defineProperty(N, k, { get: () => v, configurable: true, enumerable: true });
-        def('userAgent', ${JSON.stringify(id.ua)});
-        def('appVersion', '5.0 (Windows)');
-        def('platform', 'Win32');
-        def('vendor', '');
-        def('productSub', '20100101');
-        def('oscpu', 'Windows NT 10.0; Win64; x64');
-        def('buildID', '20181001000000');
-        try { delete N.userAgentData; } catch (e) {}
-      })();`;
+        const ua = ${JSON.stringify(id.ua)};
+        Object.defineProperty(N, 'userAgent', { get: () => ua, configurable: true, enumerable: true });
+        const appVersion = ua.startsWith('Mozilla/') ? ua.slice(8) : ua;
+        Object.defineProperty(N, 'appVersion', { get: () => appVersion, configurable: true, enumerable: true });
+      })();`);
     }
   }
 
-  try { webFrame.executeJavaScriptInIsolatedWorld(0, [{ code }]); } catch { /* ignore */ }
+  // Separate sources, compiled independently: one failing fix can't disable another.
+  try { webFrame.executeJavaScriptInIsolatedWorld(0, scripts.map((code) => ({ code }))); } catch { /* ignore */ }
 })();

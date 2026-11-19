@@ -1,49 +1,44 @@
 'use strict';
 // Site compatibility shims.
 //
-// Google sign-in rejects embedded Chromium browsers ("This browser or app may
-// not be secure") based on JavaScript checks that an Electron app cannot
-// pass while presenting as Chrome. It does accept Firefox, so on Google's
-// sign-in pages only, Coffee presents itself consistently as Firefox: the
-// User-Agent header, no Chrome client-hint headers, and the matching
-// navigator.* values in the page (via preload/compat.js). Cookies set during
-// sign-in carry over, so every other Google site keeps the normal Chrome
-// identity.
+// Google sign-in ("This browser or app may not be secure"): Google rejects
+// any browser identity that doesn't match what its scripts observe. Coffee
+// presents a clean Chrome user agent everywhere (Electron/app tokens removed),
+// and on Google's sign-in pages that disguise is exactly what gets rejected,
+// as is a Firefox disguise. The honest identity passes: Electron's own,
+// unmodified user agent with Chromium's own client hints. So on Google's
+// sign-in hosts only, Coffee says what it really is. Every other site keeps
+// the normal Chrome identity. See https://github.com/stablyai/orca/pull/36519
+// for measurements of each variant.
 const path = require('path');
 const { app, ipcMain } = require('electron');
 
-const SIGNIN_HOSTS = new Set(['accounts.google.com']);
+const SIGNIN_HOSTS = new Set(['accounts.google.com', 'accounts.youtube.com']);
 const PRELOAD = path.join(__dirname, '..', 'preload', 'compat.js');
-
-// Track the engine's age so we never look like an outdated Firefox.
-const major = process.versions.chrome.split('.')[0];
-const FIREFOX_UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${major}.0) Gecko/20100101 Firefox/${major}.0`;
 
 function hostOf(url) {
   try { return new URL(url).hostname; } catch { return ''; }
 }
 
-function setup(ses) {
+/** @param ses the browsing session; @param electronUA the untouched Electron user agent */
+function setup(ses, electronUA) {
   ses.webRequest.onBeforeSendHeaders({ urls: [...SIGNIN_HOSTS].map((h) => `https://${h}/*`) }, (details, callback) => {
     const headers = details.requestHeaders;
-    headers['User-Agent'] = FIREFOX_UA;
-    for (const name of Object.keys(headers)) {
-      if (/^sec-ch-ua/i.test(name)) delete headers[name];
-    }
+    headers['User-Agent'] = electronUA; // client hints are left as Chromium sends them
     callback({ requestHeaders: headers });
   });
 
+  // The page's navigator.userAgent must match the header.
   ipcMain.on('compat:identity', (e) => {
     const url = e.senderFrame ? e.senderFrame.url : '';
-    e.returnValue = SIGNIN_HOSTS.has(hostOf(url)) ? { ua: FIREFOX_UA } : null;
+    e.returnValue = SIGNIN_HOSTS.has(hostOf(url)) ? { ua: electronUA } : null;
   });
 
   ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
 
-  // Google remembers a "not secure" verdict in the sign-in site's stored data
-  // (cookies, local storage, IndexedDB, cache), so a profile that was rejected
-  // once keeps being rejected. When the rejection page shows up, wipe
-  // accounts.google.com's data once and restart the sign-in.
+  // Google remembers a rejection in the sign-in site's stored data, so a
+  // profile rejected once (e.g. under an older Coffee) keeps being rejected.
+  // When the rejection page shows up, wipe that data once and restart sign-in.
   app.on('web-contents-created', (_e, wc) => {
     wc.on('did-navigate', (_ev, url) => {
       if (wc.session === ses && /^https:\/\/accounts\.google\.com\/(v3\/)?signin\/rejected/.test(url)) recoverSignin(ses, wc);
@@ -57,6 +52,7 @@ async function recoverSignin(ses, wc) {
   lastRecovery = Date.now();
   try {
     await ses.clearStorageData({ origin: 'https://accounts.google.com' });
+    await ses.clearStorageData({ origin: 'https://accounts.youtube.com' });
     await ses.clearCache();
   } catch { /* best effort */ }
   if (wc.isDestroyed()) return;
