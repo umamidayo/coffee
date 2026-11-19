@@ -20,30 +20,41 @@ function hostOf(url) {
   try { return new URL(url).hostname; } catch { return ''; }
 }
 
-/** @param ses the browsing session; @param electronUA the untouched Electron user agent */
-function setup(ses, electronUA) {
+const sessions = new Set();
+let honestUA = '';
+
+/** Install the sign-in fixes on a session (normal or private). Idempotent. */
+function attach(ses) {
+  if (sessions.has(ses)) return;
+  sessions.add(ses);
   ses.webRequest.onBeforeSendHeaders({ urls: [...SIGNIN_HOSTS].map((h) => `https://${h}/*`) }, (details, callback) => {
     const headers = details.requestHeaders;
-    headers['User-Agent'] = electronUA; // client hints are left as Chromium sends them
+    headers['User-Agent'] = honestUA; // client hints are left as Chromium sends them
     callback({ requestHeaders: headers });
   });
+  ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
+}
+
+/** One-time setup. @param electronUA the untouched Electron user agent */
+function setup(ses, electronUA) {
+  honestUA = electronUA;
 
   // The page's navigator.userAgent must match the header.
   ipcMain.on('compat:identity', (e) => {
     const url = e.senderFrame ? e.senderFrame.url : '';
-    e.returnValue = SIGNIN_HOSTS.has(hostOf(url)) ? { ua: electronUA } : null;
+    e.returnValue = SIGNIN_HOSTS.has(hostOf(url)) ? { ua: honestUA } : null;
   });
-
-  ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
 
   // Google remembers a rejection in the sign-in site's stored data, so a
   // profile rejected once (e.g. under an older Coffee) keeps being rejected.
   // When the rejection page shows up, wipe that data once and restart sign-in.
   app.on('web-contents-created', (_e, wc) => {
     wc.on('did-navigate', (_ev, url) => {
-      if (wc.session === ses && /^https:\/\/accounts\.google\.com\/(v3\/)?signin\/rejected/.test(url)) recoverSignin(ses, wc);
+      if (sessions.has(wc.session) && /^https:\/\/accounts\.google\.com\/(v3\/)?signin\/rejected/.test(url)) recoverSignin(wc.session, wc);
     });
   });
+
+  attach(ses);
 }
 
 let lastRecovery = 0;
@@ -66,4 +77,4 @@ async function recoverSignin(ses, wc) {
   wc.loadURL(restart).catch(() => {});
 }
 
-module.exports = { setup, SIGNIN_HOSTS };
+module.exports = { setup, attach, SIGNIN_HOSTS };

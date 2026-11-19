@@ -53,9 +53,8 @@ const CONFIG = { loadCosmeticFilters: true, loadNetworkFilters: true, loadGeneri
   guessRequestTypeFromUrl: true };
 
 let engine = null;
-let ses = null;
+const attached = new Set(); // sessions with blocking hooks installed
 let enabled = false;
-let preloadId = null;
 let refreshTimer = null;
 let onBlocked = () => {};
 let building = null;
@@ -216,7 +215,10 @@ ipcMain.handle('adblock:dom', (_e, url, features) => {
   return r && r.active ? r.styles : '';
 });
 
-function attach() {
+/** Install the blocking hooks on a session (normal or private). Idempotent. */
+function attach(ses) {
+  if (!ses || attached.has(ses)) return;
+  attached.add(ses);
   ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (d, cb) => {
     if (enabled && engine) engine.onBeforeRequest(d, cb);
     else cb({});
@@ -225,7 +227,7 @@ function attach() {
     if (enabled && engine) engine.onHeadersReceived(d, cb);
     else cb({});
   });
-  preloadId = ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
+  ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
 }
 
 /**
@@ -233,9 +235,8 @@ function attach() {
  * first-run download).
  */
 async function setEnabled(session, on, blockedCb) {
-  ses = session;
   if (blockedCb) onBlocked = blockedCb;
-  if (preloadId === null) attach();
+  attach(session);
   enabled = !!on;
   if (!on) return;
   if (!engine) {
@@ -255,4 +256,4 @@ async function setEnabled(session, on, blockedCb) {
   if (!refreshTimer) refreshTimer = setInterval(refresh, REFRESH_MS);
 }
 
-module.exports = { setEnabled, refresh };
+module.exports = { setEnabled, refresh, attach };

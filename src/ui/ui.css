@@ -157,6 +157,19 @@ body.tabs-top #tabstrip { display: flex; }
 }
 .omni-pill:hover { color: var(--text); background: var(--press); }
 
+/* Private tab: violet accent on the address bar + a "Private" label */
+:root { --private: #8b6fd6; }
+#omni-private {
+  display: flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px 0 6px; margin-left: 2px; flex: none;
+  border-radius: 6px; background: color-mix(in srgb, var(--private) 22%, transparent); color: color-mix(in srgb, var(--private) 70%, var(--text));
+  font-size: 11.5px; font-weight: 600;
+}
+#omni-private[hidden] { display: none; }
+#omni-private svg { width: 14px; height: 14px; }
+body.private-active #omnibox { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--private) 45%, transparent); }
+body.private-active #omnibox.focused { box-shadow: 0 0 0 1px var(--private), 0 0 0 4px color-mix(in srgb, var(--private) 22%, transparent); }
+body.private-active #loading-bar .fill { background: linear-gradient(90deg, transparent, var(--private) 30%, color-mix(in srgb, var(--private) 60%, #fff) 70%, var(--private)); }
+
 /* Find bar lives inside the omnibox */
 #find {
   position: absolute; inset: 0; display: flex; align-items: center; gap: 2px; padding: 0 4px;

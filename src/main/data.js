@@ -76,6 +76,29 @@ function updateHistoryMeta(url, { title, favicon }) {
   persistHistory();
 }
 
+/**
+ * Merge imported history entries; returns how many were new. Visit counts
+ * take the larger value (not the sum), so importing twice changes nothing.
+ */
+function importHistory(entries) {
+  let n = 0;
+  for (const e of entries) {
+    if (!isRecordable(e.url)) continue;
+    const h = history.get(e.url);
+    if (h) {
+      h.visits = Math.max(h.visits, e.visits);
+      h.last = Math.max(h.last, e.last);
+      if (!h.title && e.title) h.title = e.title;
+      if (!h.favicon && e.favicon) h.favicon = e.favicon;
+    } else {
+      history.set(e.url, { url: e.url, title: e.title, favicon: e.favicon || '', visits: e.visits, last: e.last });
+      n++;
+    }
+  }
+  persistHistory();
+  return n;
+}
+
 function clearHistory() {
   history.clear();
   persistHistory();
@@ -379,6 +402,7 @@ module.exports = {
   recordVisit,
   updateHistoryMeta,
   clearHistory,
+  importHistory,
   findBookmark,
   addBookmark,
   addFolder,

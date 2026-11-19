@@ -79,7 +79,19 @@
       </div>
     </section>
 
-    <!-- 5: done -->
+    <!-- import (only shown when another browser is installed) -->
+    <section class="step" data-step="import" id="importStep">
+      <div class="mark import-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 20h14"/></svg>
+      </div>
+      <h2 style="margin-top:18px">Bring your stuff with you</h2>
+      <p class="lead">Import your bookmarks (with folders) and browsing history. Your old browser stays untouched.</p>
+      <select class="import-from" id="importFrom"></select>
+      <button class="btn primary big" id="importRun">Import</button>
+      <p class="import-result" id="importResult"></p>
+    </section>
+
+    <!-- done -->
     <section class="step" data-step="5">
       <div class="mark done">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>

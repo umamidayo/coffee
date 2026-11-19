@@ -12,6 +12,7 @@ const downloads = require('./downloads');
 const Overlay = require('./overlay');
 const updater = require('./updater');
 const compat = require('./compat');
+const importer = require('./importer');
 const { TabManager, NEWTAB, isInternal, displayUrl } = require('./tabs');
 
 // ---------------------------------------------------------------------------
@@ -306,6 +307,8 @@ function createWindow() {
       if (tab === tabs.active) emit('page-focus');
     },
     zoom: (tab, dir) => zoom(dir, tab),
+    privateSession: getPrivateSession,
+    privateEnded: endPrivateBrowsing,
   });
 }
 
@@ -406,6 +409,7 @@ function onInput(e, input, tab) {
 
   if (ctrl && !alt) {
     if (key === 't' && !shift) tabs.create();
+    else if (key === 'n' && shift) tabs.create({ private: true });
     else if (key === 't' && shift) tabs.reopenClosed();
     else if ((key === 'w' && !shift) || key === 'F4') tabs.active && tabs.close(tabs.activeId);
     else if (key === 'Tab' || key === 'PageDown' || key === 'PageUp') tabs.cycle(key === 'PageUp' || (key === 'Tab' && shift) ? -1 : 1);
@@ -496,7 +500,8 @@ function pageMenu(tab, params) {
   }
   if (params.linkURL) {
     items.push(
-      { label: 'Open link in new tab', action: () => tabs.create({ url: params.linkURL, background: true, after: tab }) },
+      { label: 'Open link in new tab', action: () => tabs.create({ url: params.linkURL, background: true, after: tab, private: tab.private }) },
+      { label: 'Open link in private tab', action: () => tabs.create({ url: params.linkURL, after: tab, private: true }) },
       { label: 'Copy link address', action: () => clipboard.writeText(params.linkURL) },
       sep,
     );
@@ -578,6 +583,7 @@ function sidebarMenu(x, y) {
   const recent = tabs.closed.slice(-8).reverse();
   const items = [
     { label: 'New tab', accel: 'Ctrl+T', action: () => tabs.create() },
+    { label: 'New private tab', accel: 'Ctrl+Shift+N', action: () => tabs.create({ private: true }) },
     { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', disabled: !recent.length, action: () => tabs.reopenClosed() },
   ];
   if (recent.length) {
@@ -746,6 +752,56 @@ function shieldMenu(rect) {
 }
 
 // ---------------------------------------------------------------------------
+// Sessions: the normal profile and private browsing
+// ---------------------------------------------------------------------------
+
+/** Everything a browsing session needs, normal or private. */
+function prepareSession(ses, { private: priv = false } = {}) {
+  ses.setUserAgent(app.userAgentFallback);
+  ses.setSpellCheckerLanguages(['en-US']);
+  registerInternalProtocol(ses);
+  setupPermissions(ses, { private: priv });
+  compat.attach(ses);
+  if (priv) {
+    adblock.attach(ses); // follows the global on/off switch
+    attachDownloads(ses, { private: true });
+  }
+}
+
+function attachDownloads(ses, opts = {}) {
+  downloads.attach(ses, () => data.settings.data.downloadDir, (sum) => {
+    emit('downloads', { ...sum, items: undefined });
+    overlay.update('downloads', sum);
+  }, (entry, wc) => {
+    emit('downloads:started', { filename: entry.filename });
+    // A tab opened only to start a download is useless afterwards.
+    const tab = wc && tabs.byWebContents(wc);
+    if (tab && !wc.getURL() && tabs.tabs.length > 1) tabs.close(tab.id);
+  }, opts);
+}
+
+// Private tabs share one in-memory session (nothing is written to disk).
+// It is created on first use and wiped when the last private tab closes.
+let privateSession = null;
+function getPrivateSession() {
+  if (!privateSession) {
+    privateSession = session.fromPartition('coffee-private'); // no "persist:" = memory only
+    prepareSession(privateSession, { private: true });
+  }
+  return privateSession;
+}
+
+function endPrivateBrowsing() {
+  if (!privateSession) return;
+  const ses = privateSession;
+  ses.clearStorageData().catch(() => {});
+  ses.clearCache().catch(() => {});
+  ses.clearAuthCache().catch(() => {});
+  ses.clearHostResolverCache().catch(() => {});
+  downloads.clearPrivate();
+}
+
+// ---------------------------------------------------------------------------
 // Permissions
 // ---------------------------------------------------------------------------
 
@@ -767,7 +823,7 @@ function originOf(url) {
   try { return new URL(url).origin; } catch { return ''; }
 }
 
-function setupPermissions(ses) {
+function setupPermissions(ses, { private: priv = false } = {}) {
   const decisions = () => data.settings.data.permissions;
   ses.setPermissionRequestHandler((wc, permission, callback, details) => {
     if (AUTO_ALLOW.has(permission)) return callback(true);
@@ -782,7 +838,7 @@ function setupPermissions(ses) {
     const answer = (allow, remember) => {
       if (answered) return;
       answered = true;
-      if (remember) { decisions()[key] = allow; data.settings.save(); }
+      if (remember && !priv) { decisions()[key] = allow; data.settings.save(); }
       callback(allow);
     };
     const host = origin.replace(/^https?:\/\//, '');
@@ -905,7 +961,7 @@ function onBlocked(wcId) {
 // ---------------------------------------------------------------------------
 
 const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done']);
-const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir']);
+const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run']);
 
 function senderKind(e) {
   const wc = e.sender;
@@ -926,7 +982,7 @@ ipcMain.on('cmd', (e, type, p = {}) => {
   p = p || {};
   switch (type) {
     // tabs
-    case 'tab:new': tabs.create(p.url ? { url: data.toUrl(p.url) } : {}); break;
+    case 'tab:new': tabs.create({ ...(p.url ? { url: data.toUrl(p.url) } : {}), private: !!p.private }); break;
     case 'tab:close': tabs.close(p.id); break;
     case 'tab:activate': tabs.activate(p.id); break;
     case 'tab:move': tabs.move(p.id, p.index); break;
@@ -1018,6 +1074,7 @@ ipcMain.on('cmd', (e, type, p = {}) => {
     case 'shield:menu': shieldMenu(p.rect); break;
     case 'app:menu': showMenu(p.x, p.y, [
       { label: 'New tab', accel: 'Ctrl+T', action: () => tabs.create() },
+    { label: 'New private tab', accel: 'Ctrl+Shift+N', action: () => tabs.create({ private: true }) },
       { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', disabled: !tabs.closed.length, action: () => tabs.reopenClosed() },
       { sep: true },
       { label: 'Downloads', accel: 'Ctrl+J', action: () => toggleDownloads() },
@@ -1072,6 +1129,17 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
     case 'newtab:data':
       return { show: data.settings.data.newtabShortcuts !== false, shortcuts: data.shortcuts(8) };
     case 'settings:get': return settingsPayload();
+    case 'import:detect': return importer.detect();
+    case 'import:run': {
+      const result = importer.run({
+        browser: String(p.browser || ''),
+        profile: String(p.profile || ''),
+        bookmarks: p.bookmarks !== false,
+        history: p.history !== false,
+      });
+      bookmarksChanged();
+      return result;
+    }
     case 'downloads:choose-dir': {
       const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], defaultPath: data.settings.data.downloadDir });
       if (!r.canceled && r.filePaths[0]) {
@@ -1134,11 +1202,8 @@ app.setAppUserModelId('app.coffee.browser');
 app.whenReady().then(async () => {
   nativeTheme.themeSource = theme.mode;
   webSession = session.fromPartition('persist:web');
-  webSession.setUserAgent(app.userAgentFallback);
-  webSession.setSpellCheckerLanguages(['en-US']);
-  registerInternalProtocol(webSession);
   compat.setup(webSession, ELECTRON_UA);
-  setupPermissions(webSession);
+  prepareSession(webSession);
 
   const blockerReady = data.settings.data.adblock
     ? adblock.setEnabled(webSession, true, onBlocked)
@@ -1147,15 +1212,7 @@ app.whenReady().then(async () => {
   createWindow();
   updater.init(() => { emit('settings', publicSettings()); broadcastSettings(); });
 
-  downloads.attach(webSession, () => data.settings.data.downloadDir, (sum) => {
-    emit('downloads', { ...sum, items: undefined });
-    overlay.update('downloads', sum);
-  }, (entry, wc) => {
-    emit('downloads:started', { filename: entry.filename });
-    // A tab opened only to start a download is useless afterwards.
-    const tab = wc && tabs.byWebContents(wc);
-    if (tab && !wc.getURL() && tabs.tabs.length > 1) tabs.close(tab.id);
-  });
+  attachDownloads(webSession);
 
   // Give the blocker a moment so the first page loads with blocking on.
   await Promise.race([blockerReady, new Promise((r) => setTimeout(r, 1200))]);

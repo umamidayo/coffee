@@ -32,6 +32,7 @@
     arrowUp: s('<path d="M12 19V5M6 11l6-6 6 6"/>'),
     arrowDown: s('<path d="M12 5v14M6 13l6 6 6-6"/>'),
     sparkle: s('<path d="M12 3.5l1.9 5.2c.2.6.7 1.1 1.4 1.4l5.2 1.9-5.2 1.9c-.6.2-1.1.7-1.4 1.4L12 20.5l-1.9-5.2a2.3 2.3 0 0 0-1.4-1.4L3.5 12l5.2-1.9c.6-.2 1.1-.7 1.4-1.4z"/>'),
+    mask: s('<path d="M3 9.6C3 8.2 4.1 7 5.5 7h13C19.9 7 21 8.2 21 9.6v1.1c0 3.2-2.6 5.8-5.8 5.8-1.5 0-2.4-.8-3.2-2.3-.8 1.5-1.7 2.3-3.2 2.3C5.6 16.5 3 13.9 3 10.7z"/><circle cx="8.2" cy="11" r="1.5" fill="currentColor" stroke="none"/><circle cx="15.8" cy="11" r="1.5" fill="currentColor" stroke="none"/>'),
     history: s('<path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4.5V9h4.5"/><path d="M12 8v4.5l3 2"/>'),
     minimize: '<svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg>',
     maximize: '<svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1"/></svg>',

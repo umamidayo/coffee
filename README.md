@@ -34,6 +34,15 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - Start typing and it fills in sites you visit (`goo` → `google.com`). Press Enter to go there.
 - Suggestions come from your history and bookmarks.
 
+**Private browsing**
+- Press `Ctrl+Shift+N` for a private tab. It has a mask badge and a violet address bar.
+- Private tabs don't save history, and their cookies and site data are deleted when you close the last one.
+
+**Switching from Chrome?**
+- Bring your bookmarks (with folders and icons) and your history over in one click. This works with Chrome, Edge, Brave and Vivaldi.
+- New users are offered this during setup, or go to **Settings → Import** at any time. Your old browser isn't changed.
+- Saved passwords and cookies can't be imported. Chrome locks them so only Chrome can read them.
+
 **New tab page**
 - A clock and the date, plus shortcuts to your favorite sites.
 - Hover a shortcut and click × to remove it.
@@ -51,6 +60,7 @@ Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or
 | Action | Keys |
 |---|---|
 | New tab / close tab | `Ctrl+T` / `Ctrl+W` |
+| New private tab | `Ctrl+Shift+N` |
 | Reopen closed tab | `Ctrl+Shift+T` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Go to tab 1–8 / last tab | `Ctrl+1`–`8` / `Ctrl+9` |

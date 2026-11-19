@@ -5,16 +5,21 @@
   const api = window.coffee;
   const $ = (id) => document.getElementById(id);
   const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-  const steps = [...document.querySelectorAll('.step')];
-  const LAST = steps.length - 1;
+  let steps = [];
+  let LAST = 0;
   let step = 0;
   let s = null;
 
   const set = (key, value) => api.send('settings:set', { key, value });
 
   // ---- navigation -------------------------------------------------------
-  $('dots').innerHTML = steps.map(() => '<i></i>').join('');
-  const dots = [...$('dots').children];
+  let dots = [];
+  function buildSteps() {
+    steps = [...document.querySelectorAll('.step')];
+    LAST = steps.length - 1;
+    $('dots').innerHTML = steps.map(() => '<i></i>').join('');
+    dots = [...$('dots').children];
+  }
 
   function go(n) {
     step = Math.max(0, Math.min(LAST, n));
@@ -117,7 +122,44 @@
     $(key).onchange = (e) => set(key, e.target.checked);
   }
 
-  api.invoke('settings:get').then((data) => {
+  // ---- import step ------------------------------------------------------
+  async function setupImport() {
+    let browsers = [];
+    try { browsers = await api.invoke('import:detect'); } catch { /* none */ }
+    const sel = $('importFrom');
+    for (const b of browsers || []) {
+      for (const p of b.profiles) {
+        const o = document.createElement('option');
+        o.value = `${b.id}|${p.dir}`;
+        o.textContent = b.profiles.length > 1 ? `${b.name}: ${p.name}` : b.name;
+        sel.appendChild(o);
+      }
+    }
+    if (!sel.options.length) { $('importStep').remove(); return; }
+    if (sel.options.length === 1) sel.hidden = true;
+    const first = browsers[0].name;
+    $('importRun').textContent = `Import from ${sel.options.length === 1 ? first : 'browser'}`;
+    $('importRun').onclick = async () => {
+      const [browser, profile] = sel.value.split('|');
+      const btn = $('importRun');
+      const out = $('importResult');
+      btn.disabled = true;
+      out.className = 'import-result';
+      out.textContent = 'Importing…';
+      const r = await api.invoke('import:run', { browser, profile });
+      btn.disabled = false;
+      if (!r || !r.ok) { out.className = 'import-result err'; out.textContent = (r && r.error) || 'Import failed'; return; }
+      const parts = [];
+      if (r.bookmarks) parts.push(`${r.bookmarks.toLocaleString()} bookmarks`);
+      if (r.history) parts.push(`${r.history.toLocaleString()} history entries`);
+      out.className = 'import-result ok';
+      out.textContent = parts.length ? `Imported ${parts.join(' and ')}. ✓` : 'Nothing new to import.';
+      btn.hidden = true;
+    };
+  }
+
+  Promise.all([api.invoke('settings:get'), setupImport()]).then(([data]) => {
+    buildSteps();
     s = data;
     renderThemes();
     renderLayouts();

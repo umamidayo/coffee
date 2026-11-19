@@ -28,6 +28,8 @@
   $('forward').innerHTML = Icons.forward;
   $('reload').innerHTML = Icons.reload;
   $('omni-star').innerHTML = Icons.star;
+  $('omni-private').innerHTML = `${Icons.mask}<span>Private</span>`;
+  $('omni-private').title = "Private tab: history isn't saved, and cookies are deleted when you close all private tabs";
   $('downloads-btn').insertAdjacentHTML('afterbegin', Icons.download);
   $('menu-btn').innerHTML = Icons.menu;
   $('win-min').innerHTML = Icons.minimize;
@@ -206,6 +208,11 @@
     display.classList.toggle('hovering', !!hoverUrl);
     display.innerHTML = showing ? prettyUrl(showing) : '';
     omni.classList.toggle('show-display', !!showing && document.activeElement !== input);
+
+    // Private tab indicator
+    const priv = !!(t && t.private);
+    document.body.classList.toggle('private-active', priv);
+    $('omni-private').hidden = !priv;
 
     // Shield / security indicator
     const web = /^https?:/.test(url);

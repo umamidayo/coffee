@@ -8,6 +8,7 @@ const data = require('./data');
 
 const INTERNAL_PRELOAD = path.join(__dirname, '..', 'preload', 'internal.js');
 const NEWTAB = 'coffee://newtab/';
+const NEWTAB_PRIVATE = 'coffee://newtab/?private';
 let nextId = 1;
 
 function isInternal(url) {
@@ -28,6 +29,8 @@ class Tab {
     this.mgr = mgr;
     this.id = nextId++;
     this.url = init.url || NEWTAB;
+    // Private tabs use a separate in-memory session and leave no history.
+    this.private = !!init.private;
     this.title = init.title || '';
     this.favicon = init.favicon || '';
     this.entries = init.entries || null; // navigation history to restore
@@ -41,6 +44,10 @@ class Tab {
     this.htmlFullscreen = false;
     this.zoom = 0;
     this.find = null;
+  }
+
+  get session() {
+    return this.private ? this.mgr.hooks.privateSession() : this.mgr.session;
   }
 
   get wc() {
@@ -62,6 +69,7 @@ class Tab {
       sleeping: !wc,
       internal: isInternal(this.url) && !this.url.startsWith('coffee://error/'),
       newtab: this.url.startsWith(NEWTAB),
+      private: this.private,
       canGoBack: wc ? wc.navigationHistory.canGoBack() : false,
       canGoForward: wc ? wc.navigationHistory.canGoForward() : false,
       zoom: this.zoom,
@@ -72,7 +80,7 @@ class Tab {
     if (this.wc) return this.view;
     const view = new WebContentsView({
       webPreferences: {
-        session: this.mgr.session,
+        session: this.session,
         preload: INTERNAL_PRELOAD,
         sandbox: true,
         contextIsolation: true,
@@ -126,19 +134,19 @@ class Tab {
       this.url = url;
       if (wasInternal !== isInternal(url)) this.applyBackground();
       if (isInternal(url)) this.favicon = '';
-      data.recordVisit(url, wc.getTitle(), '');
+      if (!this.private) data.recordVisit(url, wc.getTitle(), '');
       changed();
     });
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (!isMainFrame) return;
       this.url = url;
-      data.recordVisit(url, wc.getTitle(), this.favicon);
+      if (!this.private) data.recordVisit(url, wc.getTitle(), this.favicon);
       changed();
     });
 
     wc.on('page-title-updated', (_e, title) => {
       this.title = title;
-      data.updateHistoryMeta(this.url, { title });
+      if (!this.private) data.updateHistoryMeta(this.url, { title });
       changed();
     });
     wc.on('page-favicon-updated', (_e, favicons) => {
@@ -146,7 +154,7 @@ class Tab {
       const icon = favicons.find((f) => /\.svg($|\?)/i.test(f)) || favicons[0] || '';
       if (icon === this.favicon) return;
       this.favicon = icon;
-      data.updateHistoryMeta(this.url, { favicon: icon });
+      if (!this.private) data.updateHistoryMeta(this.url, { favicon: icon });
       const bm = data.findBookmark(this.url);
       if (bm && !bm.favicon) { data.updateBookmark(bm.id, { favicon: icon }); mgr.hooks.bookmarksChanged(); }
       changed();
@@ -203,12 +211,12 @@ class Tab {
           overrideBrowserWindowOptions: {
             autoHideMenuBar: true,
             backgroundColor: '#ffffff',
-            webPreferences: { session: mgr.session, sandbox: true, contextIsolation: true },
+            webPreferences: { session: this.session, sandbox: true, contextIsolation: true },
           },
         };
       }
       if (/^https?:|^about:blank/.test(url) || (isInternal(url) && !fromWeb())) {
-        mgr.create({ url, background: disposition === 'background-tab', after: this });
+        mgr.create({ url, background: disposition === 'background-tab', after: this, private: this.private });
       }
       return { action: 'deny' };
     });
@@ -264,8 +272,9 @@ class TabManager {
     return this.tabs.find((t) => t.view && t.view.webContents === wc) || null;
   }
 
-  create({ url = NEWTAB, background = false, after = null, index = null, init = null } = {}) {
-    const tab = new Tab(this, init || { url });
+  create({ url = NEWTAB, background = false, after = null, index = null, init = null, private: priv = false } = {}) {
+    if (priv && url === NEWTAB) url = NEWTAB_PRIVATE;
+    const tab = new Tab(this, init || { url, private: priv });
     let i = this.tabs.length;
     if (index !== null) i = index;
     else if (after) {
@@ -305,7 +314,8 @@ class TabManager {
     const i = this.tabs.findIndex((t) => t.id === id);
     if (i < 0) return;
     const tab = this.tabs[i];
-    if (tab.url && !tab.url.startsWith(NEWTAB)) {
+    // Private tabs are never offered for reopening.
+    if (!tab.private && tab.url && !tab.url.startsWith(NEWTAB)) {
       let entries = null;
       let entryIndex;
       try {
@@ -318,6 +328,7 @@ class TabManager {
     const wasActive = tab.id === this.activeId;
     this.tabs.splice(i, 1);
     tab.destroyView();
+    if (tab.private && !this.tabs.some((t) => t.private)) this.hooks.privateEnded();
     if (this.tabs.length === 0) {
       this.activeId = null;
       this.create();
@@ -384,7 +395,9 @@ class TabManager {
   }
 
   saveSession() {
-    const tabs = this.tabs.map((t) => {
+    // Private tabs are never written to disk.
+    const kept = this.tabs.filter((t) => !t.private);
+    const tabs = kept.map((t) => {
       let entries = t.entries;
       let entryIndex = t.entryIndex;
       if (t.wc) {
@@ -403,7 +416,7 @@ class TabManager {
       }
       return { url: t.url, title: t.title, favicon: t.favicon, entries, entryIndex };
     });
-    data.session.data = { tabs, active: Math.max(0, this.tabs.indexOf(this.active)) };
+    data.session.data = { tabs, active: Math.max(0, kept.indexOf(this.active)) };
     data.session.save();
   }
 
@@ -413,4 +426,4 @@ class TabManager {
   }
 }
 
-module.exports = { TabManager, NEWTAB, isInternal, displayUrl };
+module.exports = { TabManager, NEWTAB, NEWTAB_PRIVATE, isInternal, displayUrl };

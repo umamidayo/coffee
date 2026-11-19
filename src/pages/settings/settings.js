@@ -136,6 +136,43 @@
   $('clearData').onclick = () => { api.send('data:clear'); toast('Cookies and site data cleared'); };
   $('changeDir').onclick = async () => { $('downloadDir').textContent = await api.invoke('downloads:choose-dir'); };
 
+  // ---- import from another browser ----
+  async function setupImport() {
+    const browsers = await api.invoke('import:detect');
+    const sel = $('importFrom');
+    sel.textContent = '';
+    for (const b of browsers || []) {
+      for (const p of b.profiles) {
+        const o = document.createElement('option');
+        o.value = `${b.id}|${p.dir}`;
+        o.textContent = b.profiles.length > 1 ? `${b.name}: ${p.name}` : b.name;
+        sel.appendChild(o);
+      }
+    }
+    const none = !sel.options.length;
+    if (none) {
+      $('importInfo').textContent = 'No Chrome, Edge, Brave or Vivaldi profiles found on this computer';
+      sel.hidden = true;
+    }
+    $('importRun').disabled = none;
+  }
+  $('importRun').onclick = async () => {
+    const [browser, profile] = $('importFrom').value.split('|');
+    const btn = $('importRun');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+    const r = await api.invoke('import:run', { browser, profile, bookmarks: $('importBookmarks').checked, history: $('importHistory').checked });
+    btn.textContent = 'Import';
+    btn.disabled = false;
+    if (!r || !r.ok) { $('importInfo').textContent = (r && r.error) || 'Import failed'; toast('Import failed'); return; }
+    const parts = [];
+    if (r.bookmarks || r.folders) parts.push(`${r.bookmarks.toLocaleString()} bookmarks${r.folders ? ` in ${r.folders} folders` : ''}`);
+    if (r.history) parts.push(`${r.history.toLocaleString()} history entries`);
+    $('importInfo').textContent = parts.length ? `Imported ${parts.join(' and ')}` : 'Nothing new to import';
+    toast('Import complete');
+  };
+  setupImport();
+
   api.on('settings', (next) => {
     const editingCustom = s && s.theme.preset === 'custom' && document.activeElement && document.activeElement.type === 'color';
     s = next;

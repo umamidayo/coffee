@@ -69,7 +69,7 @@
       const n = document.createElement('div');
       n.className = 'tab entering';
       n.dataset.id = t.id;
-      n.innerHTML = `<div class="tab-ico"><div class="tab-icon"></div>${SPINNER}<span class="audio"></span></div>`
+      n.innerHTML = `<div class="tab-ico"><div class="tab-icon"></div>${SPINNER}<span class="audio"></span><span class="priv">${Icons.mask}</span></div>`
         + `<span class="tab-title"></span><button class="tab-close" tabindex="-1" aria-label="Close tab">${Icons.close}</button>`;
       n.addEventListener('animationend', () => n.classList.remove('entering'), { once: true });
       n._icon = n.querySelector('.tab-icon');
@@ -93,6 +93,7 @@
       n.classList.toggle('sleeping', t.sleeping && t.id !== this.activeId);
       n.classList.toggle('audible', t.audible && !t.muted);
       n.classList.toggle('muted', t.muted);
+      n.classList.toggle('private', !!t.private);
       if (t.audible || t.muted) n._audio.innerHTML = t.muted ? Icons.mute : Icons.volume;
       const title = t.title || 'New Tab';
       if (n._title !== title) { n._title = title; n._titleEl.textContent = title; }

@@ -15,6 +15,10 @@ let throttle = null;
 // Anything left "progressing" from a previous run was interrupted.
 for (const d of store.data) if (d.state === 'progressing') d.state = 'interrupted';
 
+// Downloads from private tabs: listed while private browsing lasts, never saved.
+let privateEntries = [];
+const allEntries = () => [...privateEntries, ...store.data].sort((a, b) => b.started - a.started);
+
 function list() {
   return store.data;
 }
@@ -29,7 +33,8 @@ function changed() {
 }
 
 function summary() {
-  const active = store.data.filter((d) => d.state === 'progressing');
+  const all = allEntries();
+  const active = all.filter((d) => d.state === 'progressing');
   let total = 0;
   let received = 0;
   for (const d of active) {
@@ -39,7 +44,7 @@ function summary() {
   return {
     active: active.length,
     progress: active.length && total ? received / total : active.length ? -1 : 0,
-    items: store.data,
+    items: all,
   };
 }
 
@@ -54,7 +59,7 @@ function uniquePath(dir, filename) {
   return p;
 }
 
-function attach(ses, getDir, notify, onStart) {
+function attach(ses, getDir, notify, onStart, { private: priv = false } = {}) {
   onChange = notify;
   ses.on('will-download', (_e, item, wc) => {
     const dir = getDir();
@@ -76,8 +81,13 @@ function attach(ses, getDir, notify, onStart) {
       speed: 0,
     };
     items.set(id, item);
-    store.data.unshift(entry);
-    if (store.data.length > 200) store.data.length = 200;
+    if (priv) {
+      entry.private = true;
+      privateEntries.unshift(entry);
+    } else {
+      store.data.unshift(entry);
+      if (store.data.length > 200) store.data.length = 200;
+    }
 
     let lastBytes = 0;
     let lastTime = Date.now();
@@ -107,7 +117,7 @@ function attach(ses, getDir, notify, onStart) {
 }
 
 function action(id, what) {
-  const entry = store.data.find((d) => d.id === id);
+  const entry = allEntries().find((d) => d.id === id);
   const item = items.get(id);
   switch (what) {
     case 'open':
@@ -128,9 +138,11 @@ function action(id, what) {
     case 'remove':
       if (item) item.cancel();
       store.data = store.data.filter((d) => d.id !== id);
+      privateEntries = privateEntries.filter((d) => d.id !== id);
       break;
     case 'clear':
       store.data = store.data.filter((d) => d.state === 'progressing');
+      privateEntries = privateEntries.filter((d) => d.state === 'progressing');
       break;
     default:
       return;
@@ -138,4 +150,10 @@ function action(id, what) {
   changed();
 }
 
-module.exports = { attach, list, summary, action };
+/** Private browsing ended: forget finished private downloads (files stay on disk). */
+function clearPrivate() {
+  privateEntries = privateEntries.filter((d) => d.state === 'progressing');
+  changed();
+}
+
+module.exports = { attach, list, summary, action, clearPrivate };
