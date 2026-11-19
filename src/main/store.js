@@ -17,6 +17,9 @@ class Store {
     } catch {
       /* first run or corrupt file */
     }
+    /** Whether this store already had a file (i.e. not a first run). */
+    this.existed = loaded !== null;
+    this.loadedKeys = new Set(loaded && typeof loaded === 'object' && !Array.isArray(loaded) ? Object.keys(loaded) : []);
     this.data = Array.isArray(defaults)
       ? (Array.isArray(loaded) ? loaded : structuredClone(defaults))
       : { ...structuredClone(defaults), ...(loaded && typeof loaded === 'object' ? loaded : {}) };

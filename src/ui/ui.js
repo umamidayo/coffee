@@ -181,7 +181,7 @@
     return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
-  const INTERNAL_NAMES = { settings: 'Settings' };
+  const INTERNAL_NAMES = { settings: 'Settings', welcome: 'Welcome' };
   function prettyUrl(url) {
     try {
       const u = new URL(url);

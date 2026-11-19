@@ -904,7 +904,7 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done']);
 const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir']);
 
 function senderKind(e) {
@@ -998,6 +998,14 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       bookmarksChanged();
       break;
     case 'bmbar:menu': bookmarksBarMenu(p.x, p.y); break;
+    case 'welcome:done': {
+      // Finished or skipped the welcome setup: never show it automatically again.
+      data.settings.data.onboarded = true;
+      data.settings.save();
+      const t = tabs.byWebContents(e.sender);
+      if (t && t.wc) t.wc.loadURL(NEWTAB).catch(() => {});
+      break;
+    }
     case 'newtab:hide': data.hideShortcut(String(p.url || '')); broadcastSettings(); break;
     case 'shortcuts:restore':
       data.settings.data.hiddenShortcuts = [];
@@ -1081,7 +1089,7 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
 // ---------------------------------------------------------------------------
 
 function registerInternalProtocol(ses) {
-  const hosts = new Set(['newtab', 'settings', 'error']);
+  const hosts = new Set(['newtab', 'settings', 'error', 'welcome']);
   ses.protocol.handle('coffee', async (req) => {
     const u = new URL(req.url);
     if (!hosts.has(u.hostname)) return new Response('Not found', { status: 404 });
@@ -1156,13 +1164,17 @@ app.whenReady().then(async () => {
   const argvUrls = urlsFromArgv(process.argv);
   if (data.settings.data.restoreSession && saved.tabs && saved.tabs.length) {
     for (const t of saved.tabs) {
+      // The setup page is never restored; it opens fresh if setup isn't done.
+      if (String(t.url || '').startsWith('coffee://welcome')) continue;
       tabs.create({ background: true, init: { url: t.url || NEWTAB, title: t.title, favicon: t.favicon, entries: t.entries, entryIndex: t.entryIndex } });
     }
     const target = tabs.tabs[Math.min(saved.active || 0, tabs.tabs.length - 1)];
-    if (!argvUrls.length) tabs.activate(target.id);
+    if (target && !argvUrls.length) tabs.activate(target.id);
   }
   for (const u of argvUrls) tabs.create({ url: u });
-  if (!tabs.tabs.length) tabs.create();
+  if (!tabs.tabs.length && data.settings.data.onboarded) tabs.create();
+  // First run: open the welcome setup (theme, tabs, search engine...).
+  if (!data.settings.data.onboarded) tabs.create({ url: 'coffee://welcome/' });
   else if (!tabs.active) tabs.activate(tabs.tabs[0].id);
 });
 

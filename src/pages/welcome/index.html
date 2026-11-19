@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Welcome to Coffee</title>
+  <link rel="stylesheet" href="/shared/theme.css">
+  <link rel="stylesheet" href="welcome.css">
+</head>
+<body>
+  <button id="skip" class="skip">Skip setup</button>
+
+  <main id="stage">
+    <!-- 0: hello -->
+    <section class="step" data-step="0">
+      <div class="mark">
+        <svg viewBox="0 0 32 32"><defs><mask id="crease"><rect width="32" height="32" fill="#fff"/><path d="M16 4c-3 5 3 10.6 0 24" stroke="#000" stroke-width="1.9" fill="none"/></mask></defs><g transform="rotate(38 16 16)"><ellipse cx="16" cy="16" rx="7.4" ry="10.5" fill="currentColor" mask="url(#crease)"/></g></svg>
+      </div>
+      <h1>Welcome to Coffee</h1>
+      <p class="lead">Let's make it yours. This takes about 30 seconds, and you can change everything later in Settings.</p>
+      <button class="btn primary big" data-next>Get started</button>
+    </section>
+
+    <!-- 1: theme -->
+    <section class="step" data-step="1">
+      <h2>Pick a theme</h2>
+      <p class="lead">It applies right away. You can also make your own in Settings.</p>
+      <div class="themes" id="themes"></div>
+    </section>
+
+    <!-- 2: tabs -->
+    <section class="step" data-step="2">
+      <h2>Where should your tabs go?</h2>
+      <p class="lead">Choose what feels right. You can switch any time.</p>
+      <div class="layouts" id="layouts">
+        <button class="layout" data-layout="side">
+          <div class="mini mini-side"><i class="m-top"></i><i class="m-side"><b></b><b></b><b></b></i><i class="m-page"></i></div>
+          <b>Side</b><span>Icon tabs down the left</span>
+        </button>
+        <button class="layout" data-layout="top">
+          <div class="mini mini-top"><i class="m-top"></i><i class="m-strip"><b></b><b></b><b></b></i><i class="m-page"></i></div>
+          <b>Top</b><span>Tabs under the address bar</span>
+        </button>
+        <button class="layout" data-layout="compact">
+          <div class="mini mini-compact"><i class="m-top"></i><i class="m-page"></i><i class="m-edge"></i></div>
+          <b>Compact</b><span>Hidden until you touch the left edge</span>
+        </button>
+      </div>
+      <label class="toggle-row" id="titlesRow">
+        <span><b>Show tab titles</b><small>Off shows icons only</small></span>
+        <span class="switch"><input type="checkbox" id="tabTitles"><i></i></span>
+      </label>
+    </section>
+
+    <!-- 3: search -->
+    <section class="step" data-step="3">
+      <h2>Choose a search engine</h2>
+      <p class="lead">Used when you type something that isn't a web address.</p>
+      <div class="engines" id="engines"></div>
+    </section>
+
+    <!-- 4: extras -->
+    <section class="step" data-step="4">
+      <h2>A few more things</h2>
+      <p class="lead">Sensible defaults are already on.</p>
+      <div class="toggles">
+        <label class="toggle-row">
+          <span><b>Block ads &amp; trackers</b><small>Faster, cleaner pages, including YouTube</small></span>
+          <span class="switch"><input type="checkbox" id="adblock"><i></i></span>
+        </label>
+        <label class="toggle-row">
+          <span><b>Show bookmarks bar</b><small>Appears once you bookmark something</small></span>
+          <span class="switch"><input type="checkbox" id="bookmarksBar"><i></i></span>
+        </label>
+        <label class="toggle-row">
+          <span><b>Shortcuts on the new tab page</b><small>Off shows just the time and date</small></span>
+          <span class="switch"><input type="checkbox" id="newtabShortcuts"><i></i></span>
+        </label>
+      </div>
+    </section>
+
+    <!-- 5: done -->
+    <section class="step" data-step="5">
+      <div class="mark done">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </div>
+      <h1>You're all set</h1>
+      <p class="lead">A few shortcuts to get you going:</p>
+      <div class="keys">
+        <div><kbd>Ctrl</kbd><kbd>T</kbd><span>New tab</span></div>
+        <div><kbd>Ctrl</kbd><kbd>L</kbd><span>Address bar</span></div>
+        <div><kbd>Ctrl</kbd><kbd>D</kbd><span>Bookmark page</span></div>
+        <div><kbd>Ctrl</kbd><kbd>,</kbd><span>Settings</span></div>
+      </div>
+      <button class="btn primary big" id="finish">Start browsing</button>
+    </section>
+  </main>
+
+  <footer id="nav">
+    <button class="btn ghost" id="back">Back</button>
+    <div class="dots" id="dots"></div>
+    <button class="btn primary" id="next">Continue</button>
+  </footer>
+
+  <script src="welcome.js"></script>
+</body>
+</html>

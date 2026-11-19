@@ -20,6 +20,7 @@ const settings = new Store('settings', {
   tabTitles: true,         // titles on top tabs and in the compact panel (false = icons only)
   newtabShortcuts: true,   // shortcut tiles on the new tab page
   hiddenShortcuts: [],     // hosts removed from the new tab page
+  onboarded: false,        // finished (or skipped) the welcome setup
   sleepMinutes: 30,
   restoreSession: true,
   theme: { preset: 'coffee', custom: null },
@@ -30,6 +31,8 @@ const settings = new Store('settings', {
   blockedTotal: 0,
 });
 
+// People who used Coffee before the welcome setup existed shouldn't see it.
+if (settings.existed && !settings.loadedKeys.has('onboarded')) settings.data.onboarded = true;
 const bookmarks = new Store('bookmarks', []);
 const session = new Store('session', { tabs: [], active: 0 }, 1500);
 const historyStore = new Store('history', [], 2500);

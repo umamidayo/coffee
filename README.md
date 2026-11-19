@@ -4,6 +4,8 @@
 
 **[⬇ Download the latest version](https://github.com/umamidayo/coffee/releases/latest)**: run `Coffee-Setup-x.y.z.exe`. No admin rights needed, and Coffee keeps itself up to date.
 
+The first time you open Coffee, a quick setup helps you pick a theme, where your tabs go, and your search engine. You can run it again any time from Settings.
+
 ---
 
 ## Why Coffee

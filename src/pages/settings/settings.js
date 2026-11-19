@@ -126,6 +126,7 @@
   for (const b of document.querySelectorAll('#tabLayout button')) b.onclick = () => set('tabLayout', b.dataset.v);
   $('compactSidebar').onchange = (e) => set('compactSidebar', e.target.checked);
   $('tabTitles').onchange = (e) => set('tabTitles', e.target.checked);
+  $('runSetup').onclick = () => { location.href = 'coffee://welcome/'; };
   $('newtabShortcuts').onchange = (e) => set('newtabShortcuts', e.target.checked);
   $('restoreShortcuts').onclick = () => { api.send('shortcuts:restore'); toast('Shortcuts restored'); };
   $('restoreSession').onchange = (e) => set('restoreSession', e.target.checked);
