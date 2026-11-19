@@ -38,9 +38,27 @@
             <button data-v="horizontal" role="radio">Top</button>
           </div>
         </div>
+        <div class="row" id="titlesRow">
+          <div class="txt"><b>Show tab titles</b><span>Titles on top tabs and in the compact sidebar. Off: icons only</span></div>
+          <label class="switch"><input type="checkbox" id="tabTitles"><i></i></label>
+        </div>
         <div class="row" id="compactRow">
           <div class="txt"><b>Compact sidebar</b><span>Hide the side tabs; move the mouse to the left edge of the window to show them</span></div>
           <label class="switch"><input type="checkbox" id="compactSidebar"><i></i></label>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>New tab page</h2>
+      <div class="card">
+        <div class="row">
+          <div class="txt"><b>Show shortcuts</b><span>Your bookmarks and most-visited sites under the clock. Off: just the time and date</span></div>
+          <label class="switch"><input type="checkbox" id="newtabShortcuts"><i></i></label>
+        </div>
+        <div class="row">
+          <div class="txt"><b>Removed shortcuts</b><span id="hiddenCount"></span></div>
+          <button class="btn" id="restoreShortcuts">Restore</button>
         </div>
       </div>
     </section>

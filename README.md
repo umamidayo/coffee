@@ -1,78 +1,81 @@
-# Coffee
+# ☕ Coffee
 
-A fast, minimal browser for Windows. Chromium engine, frameless window, vertical icon tabs, built-in ad blocking, and themes.
+**A fast, minimal browser for Windows.** Clean design, built-in ad blocking, and nothing in your way.
 
-## Run
+**[⬇ Download the latest version](https://github.com/umamidayo/coffee/releases/latest)**: run `Coffee-Setup-x.y.z.exe`. No admin rights needed, and Coffee keeps itself up to date.
 
-```sh
-npm install
-npm start          # run from source
-npm run dist       # build the Windows installer: dist/Coffee-Setup-<version>.exe
-npm run release    # build + publish a GitHub release (installed copies auto-update)
-npm run icon       # re-render build/icon.png + icon.ico from build/icon.svg
-```
+---
 
-## Releasing updates
+## Why Coffee
 
-Installed copies check GitHub Releases on startup and every 4 hours. They download new versions in the background and show a **Restart to update** button. Anything left pending installs the next time Coffee quits.
-
-1. One-time setup: releases publish to **github.com/umamidayo/coffee** (`build.publish` in `package.json`). Create that repository as **public**, then create a GitHub token that can write releases (classic: `repo` scope; fine-grained: Contents read/write on that repo) and expose it as `GH_TOKEN`.
-2. For each update, bump `version` in `package.json` (e.g. `0.1.2` → `0.1.3`), commit and push, then run `npm run release`. The release step creates and pushes the `v<version>` tag itself; GitHub won't publish a release without it.
-
-The repository must be public so installed copies can read the releases without a token. The installer is unsigned, so Windows SmartScreen shows a warning on first install. Updates install silently.
-
-The installer is per-user (no admin needed) and registers Coffee as a browser, so you can pick it in **Settings → Apps → Default apps**.
+- **Fast.** Chrome's engine, with a lightweight interface on top. Tabs you haven't used in a while go to sleep, so they don't slow you down.
+- **No ads.** Ads and trackers are blocked out of the box, including on YouTube.
+- **Out of your way.** No window frame, no clutter. The page gets almost the whole screen.
+- **Yours.** Pick a theme, put tabs where you like them, hide what you don't need.
 
 ## Features
 
-- **Frameless window.** A custom title bar holds navigation, the address bar and window controls in one 46px row, so nearly the whole screen is the page.
-- **Tabs on the side or on top.** Side tabs are compact icons; top tabs show titles under the bookmarks bar (Settings → Tabs, or the ⋮ menu). Drag to reorder, middle-click to close, right-click a tab for its menu, right-click empty space to reopen recently closed tabs. Tabs show a loading ring and an audio badge (click the badge to mute).
-- **Compact sidebar.** Hides the side tabs so the page gets the full width; touch the left edge of the window and a panel with your tabs slides out over the page (it never resizes the page) and hides again when you move away.
-- **Ad and tracker blocking, the uBlock Origin way.** Coffee uses uBO's own default filter lists (uBlock filters, quick fixes, badware, privacy, unbreak, resource abuse, EasyList, EasyPrivacy, Peter Lowe), fetched from uBO's servers with its `!#include`/`!#if` directives resolved. It also uses uBO's own scriptlet library, converted from uBO's source at its latest stable release by `npm run scriptlets` (this runs automatically before `dist`/`release`, and the converter only parses uBO's code, never runs it). Scriptlets are injected synchronously into the page's main world at document start in every frame, before any page script, the same way uBO does it. Scriptlet timing and version are what defeat YouTube's ads and its anti-adblock slowdown. Lists refresh every 6 hours in the background. The shield in the address bar shows a per-page count.
-- **Downloads** go straight to your downloads folder. The panel has progress, speed, pause/resume and show in folder.
-- **Bookmarks.** Use the star or Ctrl+D, then rename inline. Bookmarks appear in the bookmarks bar and on the new tab page.
-- **Themes.** Presets are Coffee, Latte, Dark, Light, Midnight, Matcha, Rosé and OLED, plus a custom theme built from four colors (background, surface, text, accent). Every other shade is derived from those four.
-- **Google sign-in works.** Google rejects any browser identity that doesn't match what its scripts see, so a disguised Electron app gets "This browser or app may not be secure". On Google's sign-in hosts (`accounts.google.com`, `accounts.youtube.com`) Coffee sends its honest Electron user agent with Chromium's own client hints, which Google accepts. Every other site keeps the normal Chrome identity. If a rejection was remembered from before, Coffee clears the sign-in site's data once and retries. See `src/main/compat.js`.
-- **No Windows Security popups on login pages.** Sites request passkey *autofill*. Chrome shows that inside its own dropdown, but Electron would hand it to a Windows dialog, so Coffee reports passkey autofill as unavailable. Clicking "Sign in with a passkey" still uses Windows Hello.
-- Address bar suggestions from history and bookmarks, find in page, per-tab zoom, permission prompts, friendly error pages, and session restore.
+**Tabs**
+- Tabs on the **side** as icons, or on **top** with titles. You can also make top tabs icons only.
+- **Compact sidebar.** Side tabs stay hidden until you move the mouse to the left edge of the window.
+- Drag tabs to reorder them, and middle-click to close.
+- Right-click empty tab space to reopen recently closed tabs.
 
-## Performance
+**Bookmarks**
+- Press the ☆ in the address bar (or `Ctrl+D`) to bookmark a page.
+- Organize bookmarks into **folders**. Folders can hold other folders.
+  - Right-click the bookmarks bar to create a folder.
+  - Drag a bookmark onto a folder to move it in.
+  - Or choose a folder in the bookmark's edit box.
 
-- The UI is plain HTML/CSS/JS with no framework. Animations use only `transform` and `opacity`.
-- **Lazy tabs.** Restored and background tabs create no renderer until you open them.
-- **Tab sleeping.** Inactive tabs release their renderer after 30 minutes by default (configurable). Back/forward history is kept.
-- All popups (menus, suggestions, downloads, tooltips, prompts) share one overlay process.
-- Tab state changes are batched into one IPC message per frame. Session snapshots are debounced.
+**Address bar**
+- Start typing and it fills in sites you visit (`goo` → `google.com`). Press Enter to go there.
+- Suggestions come from your history and bookmarks.
 
-## Shortcuts
+**New tab page**
+- A clock and the date, plus shortcuts to your favorite sites.
+- Hover a shortcut and click × to remove it.
+- Turn shortcuts off to see just the time and date.
 
-| Keys | Action |
+**Also**
+- Themes: Coffee, Latte, Dark, Light, Midnight, Matcha, Rosé, OLED, or make your own from four colors.
+- Downloads panel with progress, pause and resume, and *Show in folder*.
+- Find in page, zoom, and full screen.
+
+Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or `Ctrl+,`).
+
+## Keyboard shortcuts
+
+| Action | Keys |
 |---|---|
-| Ctrl+T / Ctrl+W / Ctrl+Shift+T | New / close / reopen tab |
-| Ctrl+Tab, Ctrl+1–9 | Switch tabs |
-| Ctrl+L, Alt+D, F6 | Focus address bar |
-| Alt+← / Alt+→, mouse side buttons | Back / forward |
-| Ctrl+R, F5 (Ctrl+Shift+R hard) | Reload |
-| Ctrl+F, Ctrl+G | Find in page |
-| Ctrl+D, Ctrl+Shift+B | Bookmark page, toggle bookmarks bar |
-| Ctrl+J | Downloads |
-| Ctrl+= / Ctrl+- / Ctrl+0 | Zoom |
-| F11 | Full screen (window controls hide; tabs and address bar stay) |
-| F12, Ctrl+Shift+I | DevTools |
-| Ctrl+, | Settings and themes |
+| New tab / close tab | `Ctrl+T` / `Ctrl+W` |
+| Reopen closed tab | `Ctrl+Shift+T` |
+| Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
+| Go to tab 1–8 / last tab | `Ctrl+1`–`8` / `Ctrl+9` |
+| Address bar | `Ctrl+L` or `F6` |
+| Back / forward | `Alt+←` / `Alt+→` (or mouse side buttons) |
+| Reload | `Ctrl+R` or `F5` |
+| Find in page | `Ctrl+F` |
+| Bookmark page | `Ctrl+D` |
+| Show/hide bookmarks bar | `Ctrl+Shift+B` |
+| Downloads | `Ctrl+J` |
+| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+| Full screen | `F11` |
+| Settings | `Ctrl+,` |
 
-## Layout
+## Privacy
 
+Coffee blocks ads and trackers using the same filter lists as uBlock Origin, kept up to date automatically. You can clear your history, cookies and site data any time in Settings. Coffee has no accounts and no telemetry.
+
+---
+
+## For developers
+
+```sh
+npm install
+npm start           # run from source
+npm run dist        # build the installer into dist/
+npm run release     # publish a new version (bump "version" in package.json, commit, push, set GH_TOKEN)
 ```
-src/main/      main process: window, layout, tabs, overlay, ad-block, compat, downloads, data, themes, updater
-src/preload/   ui.js (browser chrome + overlay), internal.js (coffee:// pages only), adblock.js + compat.js (every web frame)
-src/ui/        browser chrome (index.html), popup layer (overlay.html), shared tab strip (tabstrip.js)
-src/pages/     coffee://newtab, coffee://settings, coffee://error, shared theme tokens
-build/         app icon + installer.nsh (default-browser registration)
-```
 
-Layout metrics (sidebar 56px, top bar 46px, bookmarks bar 32px, top tab strip 38px; the page runs to the window edges) are defined in both `src/main/main.js` and `src/ui/ui.css`. Change them together.
-
-## License
-
-Coffee is free software under the [GNU General Public License v3.0 or later](LICENSE). It bundles uBlock Origin's scriptlets (GPL-3.0); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Coffee is free software under the [GNU GPL v3](LICENSE). It includes uBlock Origin's scriptlets; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

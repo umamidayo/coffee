@@ -37,3 +37,21 @@ main { display: flex; flex-direction: column; align-items: center; margin-top: -
 .face .letter { font: 600 19px/1 var(--font-display); color: var(--accent); }
 .name { max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+/* Remove-shortcut button */
+.tile { position: relative; }
+.tile .remove {
+  position: absolute; top: 4px; right: 10px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; color: var(--muted); background: var(--surface); cursor: default;
+  box-shadow: 0 1px 3px rgb(0 0 0 / .25), 0 0 0 1px var(--line);
+  opacity: 0; transform: scale(.6); transition: opacity .15s, transform .2s var(--spring), color .15s;
+}
+.tile .remove svg { width: 11px; height: 11px; }
+.tile:hover .remove { opacity: 1; transform: none; }
+.tile .remove:hover { color: var(--text); }
+.tile.removing { animation: tile-out .22s var(--ease) both; pointer-events: none; }
+@keyframes tile-out { to { opacity: 0; transform: scale(.85); } }
+
+/* Shortcuts off: just the time and date, centered. */
+body.no-shortcuts .tiles { display: none; }
+body.no-shortcuts main { margin-top: -4vh; }

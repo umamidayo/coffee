@@ -170,16 +170,99 @@
     p.innerHTML = `<h1>${Icons.starFilled}${data.created ? 'Bookmark added' : 'Edit bookmark'}</h1>
       <input class="field" id="bm-title" maxlength="300">
       <div class="sub-url"></div>
+      <label class="field-label">Folder</label>
+      <select class="field" id="bm-folder"></select>
       <div class="row"><button class="btn" id="bm-remove">Remove</button><button class="btn primary" id="bm-done">Done</button></div>`;
     const field = p.querySelector('#bm-title');
+    const folder = p.querySelector('#bm-folder');
     field.value = data.title || '';
     p.querySelector('.sub-url').textContent = data.url;
-    const save = () => api.send('bookmark:update', { id: data.id, title: field.value.trim() || data.url });
-    p.querySelector('#bm-done').onclick = () => { save(); close(); };
+    // Folder picker: the bar, then every folder indented by depth.
+    const opts = [{ id: '', title: 'Bookmarks bar', depth: 0 }, ...(data.folders || []).map((f) => ({ ...f, depth: f.depth + 1 }))];
+    for (const f of opts) {
+      const o = document.createElement('option');
+      o.value = f.id;
+      o.textContent = `${'\u2003'.repeat(f.depth)}${f.title}`;
+      folder.appendChild(o);
+    }
+    folder.value = data.parent || '';
+    const save = (withFolder) => {
+      const msg = { id: data.id, title: field.value.trim() || data.url };
+      if (withFolder) msg.parent = folder.value || null;
+      api.send('bookmark:update', msg);
+    };
+    p.querySelector('#bm-done').onclick = () => { save(true); close(); };
     p.querySelector('#bm-remove').onclick = () => api.send('bookmark:remove', { id: data.id });
-    field.addEventListener('keydown', (e) => { if (e.key === 'Enter') { save(); close(); } });
-    field.addEventListener('input', save);
+    field.addEventListener('keydown', (e) => { if (e.key === 'Enter') { save(true); close(); } });
+    field.addEventListener('input', () => save(false));
+    folder.addEventListener('change', () => save(true));
     requestAnimationFrame(() => { field.focus(); field.select(); });
+  }
+
+  // ---------- bookmark folder dropdown ----------
+  function renderFolder(data, reopen) {
+    const p = panel('menu bmf', reopen);
+    let html = '';
+    if (data.back) html += `<div class="mi bmf-back" data-nav="${esc(data.back.id)}"><span class="check">${Icons.back}</span><span class="label">${esc(data.back.title)}</span></div><div class="msep"></div>`;
+    if (!data.items.length) html += '<div class="mi disabled"><span class="check"></span><span class="label">This folder is empty</span></div>';
+    p.innerHTML = `${html}<div class="bmf-list"></div>`;
+    const list = p.querySelector('.bmf-list');
+    for (const b of data.items) {
+      const r = document.createElement('div');
+      r.className = `mi bmf-item${b.type === 'folder' ? ' bmf-sub' : ''}`;
+      const icon = b.type === 'folder' ? `<span class="bmf-ico bmf-folder">${Icons.folder}</span>`
+        : b.favicon ? `<img class="bmf-ico" src="${encodeURI(b.favicon)}" alt="">` : `<span class="bmf-ico">${Icons.globe}</span>`;
+      r.innerHTML = `${icon}<span class="label"></span>${b.type === 'folder' ? `<span class="accel">${Icons.forward}</span>` : ''}`;
+      r.querySelector('.label').textContent = b.title || b.url;
+      r.title = b.type === 'folder' ? b.title : `${b.title}\n${b.url}`;
+      const img = r.querySelector('img');
+      if (img) img.onerror = () => { img.outerHTML = `<span class="bmf-ico">${Icons.globe}</span>`; };
+      if (b.type === 'folder') {
+        r.addEventListener('click', () => api.send('bmfolder:nav', { id: b.id }));
+      } else {
+        r.addEventListener('click', (e) => api.send('bookmark:open', { id: b.id, newTab: e.shiftKey, background: e.ctrlKey }));
+        r.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('bookmark:open', { id: b.id, background: true, keepOpen: true }); });
+      }
+      list.appendChild(r);
+    }
+    if (data.items.some((b) => b.type === 'bookmark')) {
+      p.insertAdjacentHTML('beforeend', `<div class="msep"></div><div class="mi bmf-all"><span class="check"></span><span class="label">Open all in new tabs</span></div>`);
+      p.querySelector('.bmf-all').onclick = () => api.send('bmfolder:openall', { id: data.id });
+    }
+    const back = p.querySelector('.bmf-back');
+    if (back) back.onclick = () => api.send('bmfolder:nav', { id: back.dataset.nav });
+    for (const r of p.querySelectorAll('.mi:not(.disabled)')) {
+      r.addEventListener('mouseenter', () => r.classList.add('sel'));
+      r.addEventListener('mouseleave', () => r.classList.remove('sel'));
+    }
+  }
+
+  // ---------- folder name editor ----------
+  function renderFolderEditor(data) {
+    const p = panel('form');
+    p.innerHTML = `<h1>${Icons.folder}${data.rename ? 'Rename folder' : 'New folder'}</h1>
+      <input class="field" id="fd-title" maxlength="120" placeholder="Folder name">
+      <div class="row"><button class="btn" id="fd-cancel">Cancel</button><button class="btn primary" id="fd-save">${data.rename ? 'Save' : 'Create'}</button></div>`;
+    const field = p.querySelector('#fd-title');
+    field.value = data.title || '';
+    const save = () => pick({ title: field.value });
+    p.querySelector('#fd-save').onclick = save;
+    p.querySelector('#fd-cancel').onclick = close;
+    field.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+    requestAnimationFrame(() => { field.focus(); field.select(); });
+  }
+
+  // ---------- confirmation ----------
+  function renderConfirm(data) {
+    const p = panel('form');
+    p.innerHTML = `<h1>${Icons.trash}<span></span></h1><p></p>
+      <div class="row"><button class="btn" id="cf-cancel">Cancel</button><button class="btn danger" id="cf-ok"></button></div>`;
+    p.querySelector('h1 span').textContent = data.title;
+    p.querySelector('p').textContent = data.message;
+    p.querySelector('#cf-ok').textContent = data.confirm || 'OK';
+    p.querySelector('#cf-ok').onclick = () => pick({ ok: true });
+    p.querySelector('#cf-cancel').onclick = close;
+    requestAnimationFrame(() => p.querySelector('#cf-cancel').focus());
   }
 
   // ---------- permission prompt ----------
@@ -204,7 +287,9 @@
         <button class="peek-btn peek-new">${Icons.plus}<span>New tab</span></button></div>
       <div class="peek-foot"><button class="peek-btn peek-settings">${Icons.settings}<span>Settings</span></button></div>`;
     // Activate on click (not pointerdown) so tabs can still be dragged here.
-    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles: true, activateOn: 'click' });
+    const titles = data.titles !== false;
+    p.classList.toggle('peek-icons', !titles);
+    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles, activateOn: 'click' });
     peekStrip.render(data);
     p.querySelector('.peek-new').onclick = () => api.send('tab:new');
     p.querySelector('.peek-settings').onclick = () => api.send('settings:open');
@@ -223,6 +308,9 @@
 
   const renderers = {
     sidebar: renderSidebar,
+    bmfolder: renderFolder,
+    folder: renderFolderEditor,
+    confirm: renderConfirm,
     menu: renderMenu,
     suggest: renderSuggest,
     tooltip: renderTip,

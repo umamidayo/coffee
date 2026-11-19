@@ -17,6 +17,9 @@ const settings = new Store('settings', {
   bookmarksBar: true,
   tabLayout: 'vertical',   // 'vertical' (side) | 'horizontal' (top)
   compactSidebar: false,   // side tabs hidden until the mouse reaches the left edge
+  tabTitles: true,         // titles on top tabs and in the compact panel (false = icons only)
+  newtabShortcuts: true,   // shortcut tiles on the new tab page
+  hiddenShortcuts: [],     // hosts removed from the new tab page
   sleepMinutes: 30,
   restoreSession: true,
   theme: { preset: 'coffee', custom: null },
@@ -75,36 +78,115 @@ function clearHistory() {
   persistHistory();
 }
 
-// ---- Bookmarks -------------------------------------------------------------
+// ---- Bookmarks & folders ----------------------------------------------------
+// One ordered list of items: { id, type: 'bookmark' | 'folder', parent, title,
+// url?, favicon? }. `parent` is a folder id, or null for the bookmarks bar.
+// Sibling order is the order within the list.
+
+// Bookmarks saved before folders existed have no type/parent: they live on the bar.
+for (const b of bookmarks.data) {
+  if (!b.type) b.type = 'bookmark';
+  if (b.parent === undefined) b.parent = null;
+}
 
 let bmSeq = Date.now();
+const newId = () => String(bmSeq++);
+const itemById = (id) => bookmarks.data.find((b) => b.id === id) || null;
+const isFolder = (id) => { const f = itemById(id); return !!f && f.type === 'folder'; };
+const validParent = (parent) => (parent && isFolder(parent) ? parent : null);
+
 function findBookmark(url) {
-  return bookmarks.data.find((b) => b.url === url);
+  return bookmarks.data.find((b) => b.type === 'bookmark' && b.url === url);
 }
-function addBookmark({ url, title, favicon }) {
-  if (!url || findBookmark(url)) return findBookmark(url);
-  const b = { id: String(bmSeq++), url, title: title || url, favicon: favicon || '' };
+
+function children(parent = null) {
+  return bookmarks.data.filter((b) => b.parent === parent);
+}
+
+/** Ids of a folder and everything inside it. */
+function subtree(id) {
+  const out = new Set([id]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const b of bookmarks.data) {
+      if (b.parent && out.has(b.parent) && !out.has(b.id)) { out.add(b.id); grew = true; }
+    }
+  }
+  return out;
+}
+
+function addBookmark({ url, title, favicon, parent = null }) {
+  if (!url) return null;
+  const existing = findBookmark(url);
+  if (existing) return existing;
+  const b = { id: newId(), type: 'bookmark', parent: validParent(parent), url, title: title || url, favicon: favicon || '' };
   bookmarks.data.push(b);
   bookmarks.save();
   return b;
 }
+
+function addFolder(title, parent = null) {
+  const f = { id: newId(), type: 'folder', parent: validParent(parent), title: String(title || 'New folder').slice(0, 120) };
+  bookmarks.data.push(f);
+  bookmarks.save();
+  return f;
+}
+
+/** Remove a bookmark, or a folder together with everything inside it. */
 function removeBookmark(id) {
-  bookmarks.data = bookmarks.data.filter((b) => b.id !== id);
+  const gone = subtree(id);
+  bookmarks.data = bookmarks.data.filter((b) => !gone.has(b.id));
   bookmarks.save();
 }
+
 function updateBookmark(id, patch) {
-  const b = bookmarks.data.find((x) => x.id === id);
+  const b = itemById(id);
   if (!b) return;
   if (typeof patch.title === 'string') b.title = patch.title.slice(0, 300);
-  if (typeof patch.favicon === 'string') b.favicon = patch.favicon;
+  if (typeof patch.favicon === 'string' && b.type === 'bookmark') b.favicon = patch.favicon;
+  if ('parent' in patch && validParent(patch.parent) !== b.parent) moveBookmark(id, { parent: patch.parent });
   bookmarks.save();
 }
-function moveBookmark(id, index) {
-  const i = bookmarks.data.findIndex((b) => b.id === id);
-  if (i < 0) return;
-  const [b] = bookmarks.data.splice(i, 1);
-  bookmarks.data.splice(Math.max(0, Math.min(index, bookmarks.data.length)), 0, b);
+
+/**
+ * Move an item into `parent` (null = bar) at sibling position `index`
+ * (default: last). A folder can't be moved into itself or its descendants.
+ */
+function moveBookmark(id, { parent = null, index = Infinity } = {}) {
+  const item = itemById(id);
+  if (!item) return;
+  const target = validParent(parent);
+  if (item.type === 'folder' && target && subtree(id).has(target)) return;
+  bookmarks.data.splice(bookmarks.data.indexOf(item), 1);
+  item.parent = target;
+  const siblings = children(target);
+  if (index >= siblings.length) {
+    // After the last sibling (or at the end if the folder is empty).
+    const last = siblings[siblings.length - 1];
+    bookmarks.data.splice(last ? bookmarks.data.indexOf(last) + 1 : bookmarks.data.length, 0, item);
+  } else {
+    bookmarks.data.splice(bookmarks.data.indexOf(siblings[Math.max(0, index)]), 0, item);
+  }
   bookmarks.save();
+}
+
+/** Folders as a flat, indented list for pickers: [{ id, title, depth }]. */
+function folderTree() {
+  const out = [];
+  const walk = (parent, depth) => {
+    for (const f of children(parent)) {
+      if (f.type !== 'folder') continue;
+      out.push({ id: f.id, title: f.title, depth });
+      walk(f.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return out;
+}
+
+function allBookmarks() {
+  return bookmarks.data.filter((b) => b.type === 'bookmark');
 }
 
 // ---- Omnibox ---------------------------------------------------------------
@@ -129,18 +211,68 @@ function stripUrl(u) {
   return u.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '');
 }
 
-function suggest(query) {
+/**
+ * Inline autocomplete: what the address bar should complete `typed` to.
+ * Whole sites first ("goo" -> "google.com", ranked by visits across all of
+ * the site's pages); once a "/" is typed, specific pages ("github.com/u" ->
+ * "github.com/umamidayo"). Returns { text, url } or null.
+ */
+function inlineCompletion(typed) {
+  const q = String(typed || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '');
+  if (!q || /\s/.test(q)) return null;
+  const cands = new Map();
+  const consider = (url, weight) => {
+    let u;
+    try { u = new URL(url); } catch { return; }
+    if (!/^https?:$/.test(u.protocol)) return;
+    const host = u.hostname.replace(/^www\./, '');
+    let text;
+    let target;
+    if (host.startsWith(q)) {
+      text = host;
+      target = `${u.protocol}//${u.host}/`;
+    } else if (q.includes('/')) {
+      const bare = stripUrl(url).toLowerCase();
+      if (!bare.startsWith(q)) return;
+      text = stripUrl(url);
+      target = url;
+    } else {
+      return;
+    }
+    const c = cands.get(text) || { text, url: target, score: 0 };
+    c.score += weight;
+    cands.set(text, c);
+  };
+  const now = Date.now();
+  for (const h of history.values()) {
+    const days = (now - h.last) / 86400000;
+    consider(h.url, h.visits + (days < 1 ? 5 : days < 7 ? 2 : 0));
+  }
+  for (const b of allBookmarks()) consider(b.url, 20);
+  let best = null;
+  for (const c of cands.values()) {
+    // Prefer more visits; on a tie, the shorter (more general) completion.
+    if (!best || c.score > best.score || (c.score === best.score && c.text.length < best.text.length)) best = c;
+  }
+  return best ? { text: best.text, url: best.url } : null;
+}
+
+function suggest(query, { inline = true } = {}) {
   const q = String(query || '').trim().toLowerCase();
   const out = [];
   if (!q) return out;
   const direct = toUrl(q);
   const isSearch = direct === searchUrl(q);
   const eng = SEARCH_ENGINES[settings.data.searchEngine] || SEARCH_ENGINES.google;
+  // First row is what Enter does: the inline completion when there is one.
+  const completion = inline ? inlineCompletion(query) : null;
+  if (completion) out.push({ kind: 'url', title: completion.text, sub: 'Open', url: completion.url, inline: completion.text });
   out.push(isSearch
     ? { kind: 'search', title: q, sub: `Search ${eng.name}`, url: direct }
     : { kind: 'url', title: stripUrl(direct), sub: 'Open', url: direct });
 
   const seen = new Set([direct]);
+  if (completion) seen.add(completion.url);
   const scored = [];
   const score = (item, base) => {
     const url = item.url.toLowerCase();
@@ -154,7 +286,7 @@ function suggest(query) {
     if (!s) return 0;
     return s + base;
   };
-  for (const b of bookmarks.data) {
+  for (const b of allBookmarks()) {
     const s = score(b, 50);
     if (s) scored.push({ s, item: { kind: 'bookmark', title: b.title, sub: stripUrl(b.url), url: b.url, favicon: b.favicon } });
   }
@@ -175,6 +307,35 @@ function suggest(query) {
     out.push({ kind: 'search', title: q, sub: `Search ${eng.name}`, url: searchUrl(q) });
   }
   return out;
+}
+
+function hostKey(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+
+function hideShortcut(url) {
+  const host = hostKey(url);
+  if (!host) return;
+  const list = settings.data.hiddenShortcuts || (settings.data.hiddenShortcuts = []);
+  if (!list.includes(host)) list.push(host);
+  if (list.length > 500) list.splice(0, list.length - 500);
+  settings.save();
+}
+
+/** New tab shortcuts: bar bookmarks first, then most-visited sites. */
+function shortcuts(n = 8) {
+  const hidden = new Set(settings.data.hiddenShortcuts || []);
+  const seen = new Set();
+  const out = [];
+  const add = (it) => {
+    const host = hostKey(it.url);
+    if (!host || hidden.has(host) || seen.has(host)) return;
+    seen.add(host);
+    out.push({ url: it.url, title: it.title, favicon: it.favicon || '' });
+  };
+  for (const b of children(null)) if (b.type === 'bookmark') add(b);
+  for (const s of topSites(n * 2)) add(s);
+  return out.slice(0, n);
 }
 
 function topSites(n = 8) {
@@ -217,11 +378,19 @@ module.exports = {
   clearHistory,
   findBookmark,
   addBookmark,
+  addFolder,
   removeBookmark,
   updateBookmark,
   moveBookmark,
+  children,
+  subtree,
+  folderTree,
+  allBookmarks,
+  itemById,
   toUrl,
   suggest,
   topSites,
+  shortcuts,
+  hideShortcut,
   Store,
 };

@@ -101,7 +101,7 @@ function windowState() {
 }
 
 function bookmarksBarShown() {
-  return !!data.settings.data.bookmarksBar && data.bookmarks.data.length > 0;
+  return !!data.settings.data.bookmarksBar && data.children(null).length > 0;
 }
 
 const tabsOnTop = () => data.settings.data.tabLayout === 'horizontal';
@@ -158,10 +158,13 @@ function peekTick() {
   }
 }
 
+const peekTitles = () => data.settings.data.tabTitles !== false;
+
 function showPeek() {
   const [, h] = win.getContentSize();
   const top = chromeTop();
-  overlay.open('sidebar', { x: 0, y: top, width: PEEK_W + M, height: h - top }, tabs.snapshot());
+  const width = peekTitles() ? PEEK_W : SIDEBAR_W + 8;
+  overlay.open('sidebar', { x: 0, y: top, width: width + M, height: h - top }, { ...tabs.snapshot(), titles: peekTitles() });
 }
 
 function toggleTabLayout() { setSetting('tabLayout', tabsOnTop() ? 'vertical' : 'horizontal'); }
@@ -254,7 +257,7 @@ function createWindow() {
     layout,
     render: (snap) => {
       emit('tabs', snap);
-      overlay.update('sidebar', snap);
+      overlay.update('sidebar', { ...snap, titles: peekTitles() });
       // Session snapshots walk every tab's history, so keep them rare.
       clearTimeout(sessionTimer);
       sessionTimer = setTimeout(() => tabs && tabs.saveSession(), 2000);
@@ -376,6 +379,7 @@ function publicSettings() {
     bookmarksBarShown: bookmarksBarShown(),
     tabLayout: tabsOnTop() ? 'horizontal' : 'vertical',
     compactSidebar: !!data.settings.data.compactSidebar,
+    tabTitles: data.settings.data.tabTitles !== false,
     adblock: s.adblock,
     searchEngine: s.searchEngine,
     update: updater.status,
@@ -587,16 +591,95 @@ function sidebarMenu(x, y) {
 }
 
 function bookmarkMenu(id, x, y) {
-  const bm = data.bookmarks.data.find((b) => b.id === id);
+  const bm = data.itemById(id);
   if (!bm) return;
+  if (bm.type === 'folder') {
+    const inside = data.allBookmarks().filter((b) => data.subtree(id).has(b.id));
+    showMenu(x, y, [
+      { label: `Open all (${inside.length})`, disabled: !inside.length, action: () => openAll(inside) },
+      { sep: true },
+      { label: 'New folder inside…', action: () => folderEditor({ parent: id }) },
+      { label: 'Rename…', action: () => folderEditor({ id }) },
+      { label: 'Delete folder', action: () => deleteItem(id) },
+    ]);
+    return;
+  }
   showMenu(x, y, [
     { label: 'Open', action: () => navigate(bm.url) },
     { label: 'Open in new tab', action: () => navigate(bm.url, { background: true }) },
     { label: 'Copy link', action: () => clipboard.writeText(bm.url) },
     { sep: true },
     { label: 'Edit…', action: () => editBookmark(bm, null) },
-    { label: 'Delete', action: () => { data.removeBookmark(id); bookmarksChanged(); } },
+    { label: 'Delete', action: () => deleteItem(id) },
   ]);
+}
+
+/** Right-click on empty bookmarks-bar space. */
+function bookmarksBarMenu(x, y) {
+  const tab = tabs.active;
+  const url = tab && displayUrl(tab.url);
+  showMenu(x, y, [
+    { label: 'New folder…', action: () => folderEditor({ parent: null }) },
+    { label: 'Bookmark this page', accel: 'Ctrl+D', disabled: !url || isInternal(url), action: () => starBookmark() },
+    { sep: true },
+    { label: 'Hide bookmarks bar', accel: 'Ctrl+Shift+B', action: toggleBookmarksBar },
+  ]);
+}
+
+function openAll(list) {
+  for (const b of list.slice(0, 30)) tabs.create({ url: b.url, background: true, after: tabs.active });
+}
+
+/** Delete a bookmark; a non-empty folder asks first. */
+function deleteItem(id) {
+  const item = data.itemById(id);
+  if (!item) return;
+  const count = data.subtree(id).size - 1;
+  if (item.type !== 'folder' || count === 0) {
+    data.removeBookmark(id);
+    bookmarksChanged();
+    return;
+  }
+  const [w, h] = win.getContentSize();
+  const width = 340 + 2 * M;
+  const height = 132 + 2 * M;
+  overlay.open('confirm', { x: (w - width) / 2, y: Math.max(TOPBAR_H, h / 2 - height), width, height }, {
+    title: `Delete “${item.title}”?`,
+    message: `This also deletes the ${count} ${count === 1 ? 'item' : 'items'} inside it.`,
+    confirm: 'Delete',
+  }, { focus: true, onPick: (p) => { if (p.ok) { data.removeBookmark(id); bookmarksChanged(); } } });
+}
+
+/** Create ({ parent }) or rename ({ id }) a folder. */
+function folderEditor({ id = null, parent = null }) {
+  const folder = id ? data.itemById(id) : null;
+  const [w] = win.getContentSize();
+  const width = 320 + 2 * M;
+  overlay.open('folder', { x: (w - width) / 2, y: TOPBAR_H + 4, width, height: 132 + 2 * M },
+    { title: folder ? folder.title : '', rename: !!folder },
+    { focus: true, onPick: (p) => {
+      const title = String(p.title || '').trim() || 'New folder';
+      if (folder) data.updateBookmark(id, { title });
+      else data.addFolder(title, parent);
+      bookmarksChanged();
+    } });
+}
+
+/** Dropdown listing a folder's contents, anchored under its bar button. */
+let folderAnchor = null;
+function openFolder(id, rect) {
+  const folder = data.itemById(id);
+  if (!folder || folder.type !== 'folder') return;
+  if (rect) folderAnchor = rect;
+  const r = folderAnchor || { x: 80, y: TOPBAR_H, width: 0, height: BOOKMARKS_H - 4 };
+  const items = data.children(id).map((b) => ({ id: b.id, type: b.type, title: b.title, url: b.url || '', favicon: b.favicon || '' }));
+  const back = folder.parent ? data.itemById(folder.parent) : null;
+  const rows = Math.min(Math.max(items.length, 1), 12);
+  const width = 280 + 2 * M;
+  const height = 8 + (back ? 34 : 0) + rows * 32 + (items.some((b) => b.type === 'bookmark') ? 41 : 0) + 8 + 2 * M;
+  overlay.open('bmfolder', { x: r.x - M, y: r.y + r.height + 4 - M, width, height },
+    { id, title: folder.title, items, back: back ? { id: back.id, title: back.title } : null },
+    { focus: true });
 }
 
 let lastStarRect = null;
@@ -618,8 +701,8 @@ function editBookmark(bm, rect, created = false) {
   const [w] = win.getContentSize();
   const width = 320 + 2 * M;
   const r = rect || { x: w - 360, y: TOPBAR_H - 6, width: 0, height: 0 };
-  overlay.open('bookmark', { x: r.x + r.width - width + M + 6, y: r.y + r.height + 6 - M, width, height: 168 + 2 * M },
-    { id: bm.id, title: bm.title, url: bm.url, created },
+  overlay.open('bookmark', { x: r.x + r.width - width + M + 6, y: r.y + r.height + 6 - M, width, height: 214 + 2 * M },
+    { id: bm.id, title: bm.title, url: bm.url, created, parent: bm.parent || '', folders: data.folderTree() },
     { focus: true });
 }
 
@@ -744,6 +827,13 @@ function setSetting(key, value) {
       layout();
       updatePeekWatch();
       break;
+    case 'tabTitles':
+      s.tabTitles = !!value;
+      if (overlay.isOpen('sidebar')) overlay.close();
+      break;
+    case 'newtabShortcuts':
+      s.newtabShortcuts = !!value;
+      break;
     case 'sleepMinutes':
       s.sleepMinutes = [0, 5, 15, 30, 60, 120].includes(Number(value)) ? Number(value) : 30;
       break;
@@ -774,6 +864,9 @@ function settingsPayload() {
     bookmarksBar: s.bookmarksBar,
     tabLayout: s.tabLayout,
     compactSidebar: !!s.compactSidebar,
+    tabTitles: s.tabTitles !== false,
+    newtabShortcuts: s.newtabShortcuts !== false,
+    hiddenShortcuts: (s.hiddenShortcuts || []).length,
     sleepMinutes: s.sleepMinutes,
     restoreSession: s.restoreSession,
     theme: s.theme,
@@ -811,7 +904,7 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'bookmark:open', 'update:check', 'update:install']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore']);
 const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir']);
 
 function senderKind(e) {
@@ -886,14 +979,34 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       break;
     case 'bookmark:star': starBookmark(p.rect); break;
     case 'bookmark:open': {
-      const bm = data.bookmarks.data.find((b) => b.id === p.id);
-      if (bm) navigate(bm.url, { newTab: !!p.newTab, background: !!p.background });
+      const bm = data.itemById(p.id);
+      if (bm && bm.type === 'bookmark') navigate(bm.url, { newTab: !!p.newTab, background: !!p.background });
+      if (kind === 'overlay' && !p.keepOpen) overlay.close();
       break;
     }
     case 'bookmark:menu': bookmarkMenu(p.id, p.x, p.y); break;
-    case 'bookmark:update': data.updateBookmark(p.id, { title: p.title }); bookmarksChanged(); break;
+    case 'bookmark:update': {
+      const patch = { title: p.title };
+      if ('parent' in p) patch.parent = p.parent || null;
+      data.updateBookmark(p.id, patch);
+      bookmarksChanged();
+      break;
+    }
     case 'bookmark:remove': data.removeBookmark(p.id); bookmarksChanged(); overlay.close(); break;
-    case 'bookmark:move': data.moveBookmark(p.id, p.index); bookmarksChanged(); break;
+    case 'bookmark:move':
+      data.moveBookmark(p.id, { parent: p.parent || null, index: Number.isFinite(p.index) ? p.index : Infinity });
+      bookmarksChanged();
+      break;
+    case 'bmbar:menu': bookmarksBarMenu(p.x, p.y); break;
+    case 'newtab:hide': data.hideShortcut(String(p.url || '')); broadcastSettings(); break;
+    case 'shortcuts:restore':
+      data.settings.data.hiddenShortcuts = [];
+      data.settings.save();
+      broadcastSettings();
+      break;
+    case 'bmfolder:open': openFolder(p.id, p.rect); break;
+    case 'bmfolder:nav': openFolder(p.id); break;
+    case 'bmfolder:openall': openAll(data.children(p.id).filter((b) => b.type === 'bookmark')); overlay.close(); break;
     case 'shield:menu': shieldMenu(p.rect); break;
     case 'app:menu': showMenu(p.x, p.y, [
       { label: 'New tab', accel: 'Ctrl+T', action: () => tabs.create() },
@@ -947,9 +1060,9 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
         downloads: { ...downloads.summary(), items: undefined },
         window: windowState(),
       };
-    case 'suggest': return data.suggest(p.q);
+    case 'suggest': return data.suggest(p.q, { inline: p.inline !== false });
     case 'newtab:data':
-      return { topSites: data.topSites(8), bookmarks: data.bookmarks.data.slice(0, 16) };
+      return { show: data.settings.data.newtabShortcuts !== false, shortcuts: data.shortcuts(8) };
     case 'settings:get': return settingsPayload();
     case 'downloads:choose-dir': {
       const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'], defaultPath: data.settings.data.downloadDir });

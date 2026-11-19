@@ -51,7 +51,8 @@
     const type = state.overlay;
     if (!type || type === 'suggest' || type === 'tooltip') return;
     const toggle = e.target.closest('[data-toggle]');
-    if (toggle && toggle.dataset.toggle === type) suppressClick = toggle;
+    if (toggle && toggle.dataset.toggle === type
+      && (!toggle.dataset.toggleId || toggle.dataset.toggleId === openFolderId)) suppressClick = toggle;
     api.send('overlay:close');
   }, true);
   document.addEventListener('click', (e) => {
@@ -96,6 +97,7 @@
     document.body.classList.toggle('tabs-top', layout === 'horizontal');
     document.body.classList.toggle('tabs-side', layout === 'vertical');
     document.body.classList.toggle('compact', layout === 'vertical' && !!s.compactSidebar);
+    topStrip.setTitles(s.tabTitles !== false);
     if (layout !== tabLayout) {
       tabLayout = layout;
       renderTabs();
@@ -239,14 +241,22 @@
     api.send('suggest:show', { rect: rectOf(omni), items: suggestions, selected });
   }
 
-  async function updateSuggestions() {
+  async function updateSuggestions(allowInline = true) {
     const q = input.value;
     const seq = ++suggestSeq;
     if (!q.trim()) { suggestions = []; api.send('overlay:close', { type: 'suggest' }); return; }
-    const items = await api.invoke('suggest', { q });
+    const items = await api.invoke('suggest', { q, inline: allowInline });
     if (seq !== suggestSeq || document.activeElement !== input) return;
     suggestions = items || [];
     selected = 0;
+    // Inline autocomplete: "goo" becomes "goo|gle.com" with the added part
+    // selected, so Enter opens it and typing simply continues over it.
+    const first = suggestions[0];
+    if (allowInline && first && first.inline && input.value === q && input.selectionStart === q.length
+      && first.inline.length > q.length && first.inline.toLowerCase().startsWith(q.toLowerCase())) {
+      input.value = q + first.inline.slice(q.length);
+      input.setSelectionRange(q.length, input.value.length);
+    }
     showSuggestions();
   }
 
@@ -272,11 +282,13 @@
       renderOmni();
     }, 140);
   });
-  input.addEventListener('input', () => {
+  input.addEventListener('input', (e) => {
     if (!editing) api.send('urlbar:typing');
     editing = true;
     justFocused = false;
-    updateSuggestions();
+    // Backspace/Delete removes the completion and must not bring it back.
+    const deleting = typeof e.inputType === 'string' && e.inputType.startsWith('delete');
+    updateSuggestions(!deleting);
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -394,27 +406,110 @@
   // Bookmarks bar
   // =====================================================================
   const bmBar = $('bookmarks-bar');
+  let bmSeen = new Set();   // ids already shown: only new items animate in
+  let openFolderId = null;  // folder whose dropdown is open (for toggling)
+  const BM_MIME = 'application/x-coffee-bookmark';
+
   function renderBookmarks() {
     bmBar.textContent = '';
-    if (!state.bookmarks.length) return; // the bar hides itself when empty
+    const items = state.bookmarks.filter((b) => (b.parent || null) === null);
+    if (!items.length) { bmSeen = new Set(); return; } // the bar hides itself when empty
     const frag = document.createDocumentFragment();
-    state.bookmarks.forEach((b, i) => {
-      const n = el('button', 'bm');
-      n.style.animationDelay = `${Math.min(i, 12) * 18}ms`;
-      const icon = b.favicon ? `<img src="${encodeURI(b.favicon)}" alt="" draggable="false">` : `<span class="bm-glyph">${Icons.globe}</span>`;
+    let fresh = 0;
+    for (const b of items) {
+      const folder = b.type === 'folder';
+      const n = el('button', folder ? 'bm bm-folder' : 'bm');
+      n.dataset.id = b.id;
+      n.draggable = true;
+      if (!bmSeen.has(b.id)) n.style.animationDelay = `${Math.min(fresh++, 12) * 18}ms`;
+      else n.style.animation = 'none';
+      let icon;
+      if (folder) icon = `<span class="bm-glyph bm-folder-ico">${Icons.folder}</span>`;
+      else if (b.favicon) icon = `<img src="${encodeURI(b.favicon)}" alt="" draggable="false">`;
+      else icon = `<span class="bm-glyph">${Icons.globe}</span>`;
       n.innerHTML = `${icon}<span></span>`;
       n.lastChild.textContent = b.title || b.url;
-      n.title = `${b.title}\n${b.url}`;
+      n.title = folder ? b.title : `${b.title}\n${b.url}`;
       const img = n.querySelector('img');
       if (img) img.onerror = () => { img.outerHTML = `<span class="bm-glyph">${Icons.globe}</span>`; };
-      n.onclick = (e) => api.send('bookmark:open', { id: b.id, background: e.ctrlKey, newTab: e.shiftKey });
-      n.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('bookmark:open', { id: b.id, background: true }); });
+      if (folder) {
+        n.dataset.toggle = 'bmfolder';
+        n.dataset.toggleId = b.id;
+        n.onclick = () => { openFolderId = b.id; api.send('bmfolder:open', { id: b.id, rect: rectOf(n) }); };
+      } else {
+        n.onclick = (e) => api.send('bookmark:open', { id: b.id, background: e.ctrlKey, newTab: e.shiftKey });
+        n.addEventListener('auxclick', (e) => { if (e.button === 1) api.send('bookmark:open', { id: b.id, background: true }); });
+      }
       n.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
-      n.addEventListener('contextmenu', (e) => { e.preventDefault(); api.send('bookmark:menu', { id: b.id, x: e.clientX, y: e.clientY }); });
+      n.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); api.send('bookmark:menu', { id: b.id, x: e.clientX, y: e.clientY }); });
       frag.appendChild(n);
-    });
+    }
+    bmSeen = new Set(items.map((b) => b.id));
     bmBar.appendChild(frag);
   }
+
+  // Right-click empty bar space: new folder, etc.
+  bmBar.addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.bm')) return;
+    e.preventDefault();
+    api.send('bmbar:menu', { x: e.clientX, y: e.clientY });
+  });
+
+  // ---- drag & drop: reorder on the bar, or drop onto a folder to file it ----
+  let dragId = null;
+  const clearDrop = () => { for (const n of bmBar.querySelectorAll('.drop-into, .drop-before, .drop-after')) n.classList.remove('drop-into', 'drop-before', 'drop-after'); };
+
+  /** Where would a drop at clientX land relative to item n? */
+  function dropZone(n, clientX) {
+    const r = n.getBoundingClientRect();
+    const f = (clientX - r.left) / r.width;
+    if (n.classList.contains('bm-folder') && n.dataset.id !== dragId && f > 0.25 && f < 0.75) return 'into';
+    return f < 0.5 ? 'before' : 'after';
+  }
+
+  bmBar.addEventListener('dragstart', (e) => {
+    const n = e.target.closest('.bm');
+    if (!n) return;
+    dragId = n.dataset.id;
+    e.dataTransfer.setData(BM_MIME, dragId);
+    e.dataTransfer.effectAllowed = 'move';
+    n.classList.add('dragging');
+    if (state.overlay) api.send('overlay:close');
+  });
+  bmBar.addEventListener('dragend', () => {
+    dragId = null;
+    clearDrop();
+    for (const n of bmBar.querySelectorAll('.dragging')) n.classList.remove('dragging');
+  });
+  bmBar.addEventListener('dragover', (e) => {
+    if (!dragId) return;
+    const n = e.target.closest('.bm');
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    clearDrop();
+    if (n && n.dataset.id !== dragId) n.classList.add(`drop-${dropZone(n, e.clientX)}`);
+  });
+  bmBar.addEventListener('dragleave', (e) => { if (!bmBar.contains(e.relatedTarget)) clearDrop(); });
+  bmBar.addEventListener('drop', (e) => {
+    e.preventDefault();
+    const id = dragId;
+    clearDrop();
+    if (!id) return;
+    const n = e.target.closest('.bm');
+    const others = [...bmBar.querySelectorAll('.bm')].filter((x) => x.dataset.id !== id);
+    if (!n || n.dataset.id === id) {
+      // Dropped on empty bar space: move to the end of the bar.
+      if (!n) api.send('bookmark:move', { id, parent: null, index: others.length });
+      return;
+    }
+    const zone = dropZone(n, e.clientX);
+    if (zone === 'into') {
+      api.send('bookmark:move', { id, parent: n.dataset.id });
+    } else {
+      const index = others.indexOf(n) + (zone === 'after' ? 1 : 0);
+      api.send('bookmark:move', { id, parent: null, index });
+    }
+  });
 
   // =====================================================================
   // Loading bar

@@ -237,6 +237,16 @@ body.no-bookmarks #bookmarks-bar { display: none; }
 .bm .bm-glyph { color: var(--faint); }
 .bm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-empty { color: var(--faint); font-size: 12px; padding: 0 8px; }
+.bm { position: relative; }
+.bm-folder .bm-folder-ico { color: var(--accent); }
+.bm.dragging { opacity: .4; }
+/* Drop markers: a bar before/after an item, or a highlighted folder. */
+.bm.drop-before::before, .bm.drop-after::after {
+  content: ""; position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--accent);
+}
+.bm.drop-before::before { left: -2px; }
+.bm.drop-after::after { right: -2px; }
+.bm.drop-into { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .bm-empty kbd { font: inherit; padding: 1px 5px; border-radius: 4px; background: var(--hover); color: var(--muted); }
 
 /* ---------- Loading bar & page slot ---------- */

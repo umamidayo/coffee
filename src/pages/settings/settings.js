@@ -85,6 +85,11 @@
       b.setAttribute('aria-checked', String(on));
     }
     $('compactSidebar').checked = !!s.compactSidebar;
+    $('tabTitles').checked = s.tabTitles !== false;
+    $('newtabShortcuts').checked = s.newtabShortcuts !== false;
+    const n = s.hiddenShortcuts || 0;
+    $('hiddenCount').textContent = n ? `${n} site${n === 1 ? '' : 's'} hidden from the new tab page` : 'Remove a shortcut with the × that appears when you hover it';
+    $('restoreShortcuts').disabled = !n;
     $('compactRow').classList.toggle('disabled', s.tabLayout === 'horizontal');
     $('restoreSession').checked = s.restoreSession;
     $('adblock').checked = s.adblock;
@@ -120,6 +125,9 @@
   $('bookmarksBar').onchange = (e) => set('bookmarksBar', e.target.checked);
   for (const b of document.querySelectorAll('#tabLayout button')) b.onclick = () => set('tabLayout', b.dataset.v);
   $('compactSidebar').onchange = (e) => set('compactSidebar', e.target.checked);
+  $('tabTitles').onchange = (e) => set('tabTitles', e.target.checked);
+  $('newtabShortcuts').onchange = (e) => set('newtabShortcuts', e.target.checked);
+  $('restoreShortcuts').onclick = () => { api.send('shortcuts:restore'); toast('Shortcuts restored'); };
   $('restoreSession').onchange = (e) => set('restoreSession', e.target.checked);
   $('adblock').onchange = (e) => set('adblock', e.target.checked);
   $('sleepMinutes').onchange = (e) => set('sleepMinutes', Number(e.target.value));

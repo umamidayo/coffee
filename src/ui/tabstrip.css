@@ -107,6 +107,18 @@
   content: ""; position: absolute; left: -3px; top: 8px; bottom: 8px; width: 1px; background: var(--line);
 }
 
+/* --- horizontal icon-only tabs (tabs on top, titles off) --- */
+.ts-h:not(.ts-titles) .tab { flex: none; width: 36px; max-width: none; min-width: 0; padding: 0; justify-content: center; }
+.ts-h:not(.ts-titles) .tab .tab-close {
+  position: absolute; top: -4px; right: -4px; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--raised); box-shadow: 0 1px 3px rgb(0 0 0 / .3), 0 0 0 1px var(--line);
+  transform: scale(.6);
+}
+.ts-h:not(.ts-titles) .tab .tab-close svg { width: 9px; height: 9px; }
+.ts-h:not(.ts-titles) .tab.active .tab-close { opacity: 0; }
+.ts-h:not(.ts-titles) .tab:hover .tab-close { opacity: 1; transform: scale(1); }
+.ts-h:not(.ts-titles) .tab + .tab::before { display: none; }
+
 /* --- enter / leave / drag --- */
 .tab.entering { animation: ts-in .42s var(--spring) both; }
 @keyframes ts-in { from { opacity: 0; transform: scale(.4); } to { opacity: 1; transform: none; } }

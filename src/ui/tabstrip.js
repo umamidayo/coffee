@@ -170,6 +170,13 @@
     /** Re-measure (e.g. after the strip was resized or shown). */
     relayout() { this.moveHighlight(); }
 
+    /** Switch between titled tabs and icon-only tabs. */
+    setTitles(on) {
+      if (this.root.classList.contains('ts-titles') === !!on) return;
+      this.root.classList.toggle('ts-titles', !!on);
+      requestAnimationFrame(() => this.moveHighlight());
+    }
+
     // ---- interactions -------------------------------------------------------
     activate(id) {
       if (id === this.activeId) return;
