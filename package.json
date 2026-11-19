@@ -1,0 +1,76 @@
+{
+  "name": "coffee",
+  "productName": "Coffee",
+  "version": "0.1.0",
+  "description": "A fast, minimal, good-looking browser.",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "scriptlets": "node scripts/build-scriptlets.js",
+    "icon": "electron scripts/make-icon.js",
+    "predist": "node scripts/build-scriptlets.js",
+    "dist": "electron-builder --win --publish never",
+    "prerelease": "node scripts/build-scriptlets.js",
+    "release": "electron-builder --win --publish always"
+  },
+  "license": "MIT",
+  "build": {
+    "appId": "app.coffee.browser",
+    "productName": "Coffee",
+    "icon": "build/icon.ico",
+    "files": [
+      "src/**/*",
+      "build/icon.png",
+      "build/icon.ico",
+      "package.json"
+    ],
+    "asar": true,
+    "compression": "normal",
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Coffee",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "include": "build/installer.nsh",
+      "artifactName": "Coffee-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "umamidayo",
+        "repo": "coffee-browser",
+        "releaseType": "release"
+      }
+    ]
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "^2.20.3",
+    "electron-updater": "^6.6.2",
+    "tldts-experimental": "^7.5.5"
+  },
+  "devDependencies": {
+    "acorn": "^8.15.0",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/umamidayo/coffee-browser.git"
+  },
+  "author": "umamidayo"
+}

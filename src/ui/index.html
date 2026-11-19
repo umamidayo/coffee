@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Coffee</title>
+  <link rel="stylesheet" href="../pages/shared/theme.css">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="brand drag" id="brand" title=""></div>
+    <div id="tabs-scroll">
+      <div id="tabs">
+        <div id="tab-highlight"></div>
+      </div>
+      <button id="new-tab" class="side-btn" aria-label="New tab"></button>
+    </div>
+    <div class="side-bottom">
+      <button id="settings-btn" class="side-btn" aria-label="Settings"></button>
+    </div>
+  </aside>
+
+  <header id="topbar" class="drag">
+    <div class="nav no-drag">
+      <button id="back" class="icon-btn" aria-label="Back"></button>
+      <button id="forward" class="icon-btn" aria-label="Forward"></button>
+      <button id="reload" class="icon-btn" aria-label="Reload"></button>
+    </div>
+
+    <div id="omnibox" class="no-drag">
+      <button id="omni-shield" class="omni-icon" aria-label="Ad blocking"></button>
+      <div id="omni-field">
+        <div id="omni-display"></div>
+        <input id="omni-input" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address">
+      </div>
+      <button id="omni-zoom" class="omni-pill" hidden></button>
+      <button id="omni-star" class="omni-icon" aria-label="Bookmark this page"></button>
+
+      <div id="find" hidden>
+        <span class="find-icon"></span>
+        <input id="find-input" type="text" spellcheck="false" placeholder="Find in page">
+        <span id="find-count"></span>
+        <button id="find-prev" class="omni-icon" aria-label="Previous match"></button>
+        <button id="find-next" class="omni-icon" aria-label="Next match"></button>
+        <button id="find-close" class="omni-icon" aria-label="Close find"></button>
+      </div>
+    </div>
+
+    <div class="actions no-drag">
+      <button id="update-btn" hidden title="A new version of Coffee is ready">Restart to update</button>
+      <button id="downloads-btn" class="icon-btn" aria-label="Downloads">
+        <svg class="ring" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15"/></svg>
+      </button>
+      <button id="menu-btn" class="icon-btn" aria-label="Menu"></button>
+    </div>
+
+    <div class="winctl no-drag">
+      <button id="win-min" aria-label="Minimize"></button>
+      <button id="win-max" aria-label="Maximize"></button>
+      <button id="win-close" aria-label="Close"></button>
+    </div>
+  </header>
+
+  <nav id="bookmarks-bar"></nav>
+  <div id="loading-bar"><div class="fill"></div></div>
+  <main id="page-slot"></main>
+
+  <script src="icons.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>

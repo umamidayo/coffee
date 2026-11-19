@@ -1,0 +1,58 @@
+/* Shared theme tokens. Main process sets the four base colors (--bg, --surface,
+   --text, --accent); everything else derives from them so any custom theme
+   stays coherent. */
+:root {
+  --bg: #17120e;
+  --surface: #211a15;
+  --text: #efe4d8;
+  --accent: #c89b6d;
+  --on-accent: #141414;
+
+  --muted: color-mix(in srgb, var(--text) 56%, var(--bg));
+  --faint: color-mix(in srgb, var(--text) 32%, var(--bg));
+  --hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --press: color-mix(in srgb, var(--text) 12%, transparent);
+  --line: color-mix(in srgb, var(--text) 9%, transparent);
+  --field: color-mix(in srgb, var(--surface) 70%, var(--bg));
+  --field-focus: var(--surface);
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 55%, transparent);
+  --raised: color-mix(in srgb, var(--surface) 92%, var(--text));
+  --shadow: 0 10px 30px -8px rgb(0 0 0 / 0.45), 0 2px 8px -2px rgb(0 0 0 / 0.25);
+  --danger: #e5534b;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+
+  color-scheme: dark;
+}
+:root[data-mode="light"] {
+  --shadow: 0 10px 30px -10px rgb(40 30 20 / 0.28), 0 2px 8px -2px rgb(40 30 20 / 0.12);
+  --raised: var(--surface);
+  --field: color-mix(in srgb, var(--text) 5%, var(--bg));
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  font: 13px/1.4 var(--font);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+::selection { background: var(--accent-soft); }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 18%, transparent);
+  border: 3px solid transparent; border-radius: 8px; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in srgb, var(--text) 30%, transparent); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}

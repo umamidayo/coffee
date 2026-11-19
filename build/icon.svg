@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Full-bleed tile (no inner padding) so it matches other taskbar icons in size. -->
+  <defs>
+    <clipPath id="bean"><ellipse cx="256" cy="256" rx="118" ry="168"/></clipPath>
+  </defs>
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="#3a2619"/>
+  <g transform="rotate(38 256 256)">
+    <ellipse cx="256" cy="256" rx="118" ry="168" fill="#ecc89a"/>
+    <path d="M256 70c-48 80 48 170 0 372" fill="none" stroke="#3a2619" stroke-width="28" clip-path="url(#bean)"/>
+  </g>
+</svg>
