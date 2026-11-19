@@ -185,8 +185,15 @@ class Tab {
     wc.on('focus', () => mgr.hooks.pageFocus(this));
     wc.on('zoom-changed', (_e, dir) => mgr.hooks.zoom(this, dir === 'in' ? 1 : -1));
 
+    // Web content may not navigate to (or frame) coffee:// pages; only the
+    // browser itself opens those. Internal pages may still link out to the web.
+    const fromWeb = () => !isInternal(wc.getURL());
+    wc.on('will-navigate', (e) => { if (isInternal(e.url) && fromWeb()) e.preventDefault(); });
+    wc.on('will-frame-navigate', (e) => { if (!e.isMainFrame && isInternal(e.url)) e.preventDefault(); });
+
     wc.setWindowOpenHandler((details) => {
       const { url, disposition } = details;
+      if (isInternal(url) && fromWeb()) return { action: 'deny' };
       // Real popups (OAuth, payment windows) need window.opener, so allow them.
       if (disposition === 'new-window') {
         return {
@@ -198,7 +205,7 @@ class Tab {
           },
         };
       }
-      if (/^https?:|^about:blank/.test(url) || isInternal(url)) {
+      if (/^https?:|^about:blank/.test(url) || (isInternal(url) && !fromWeb())) {
         mgr.create({ url, background: disposition === 'background-tab', after: this });
       }
       return { action: 'deny' };

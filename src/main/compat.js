@@ -10,7 +10,7 @@
 // sign-in carry over, so every other Google site keeps the normal Chrome
 // identity.
 const path = require('path');
-const { ipcMain } = require('electron');
+const { app, ipcMain } = require('electron');
 
 const SIGNIN_HOSTS = new Set(['accounts.google.com']);
 const PRELOAD = path.join(__dirname, '..', 'preload', 'compat.js');
@@ -39,6 +39,35 @@ function setup(ses) {
   });
 
   ses.registerPreloadScript({ type: 'frame', filePath: PRELOAD });
+
+  // Google remembers a "not secure" verdict in the sign-in site's stored data
+  // (cookies, local storage, IndexedDB, cache), so a profile that was rejected
+  // once keeps being rejected. When the rejection page shows up, wipe
+  // accounts.google.com's data once and restart the sign-in.
+  app.on('web-contents-created', (_e, wc) => {
+    wc.on('did-navigate', (_ev, url) => {
+      if (wc.session === ses && /^https:\/\/accounts\.google\.com\/(v3\/)?signin\/rejected/.test(url)) recoverSignin(ses, wc);
+    });
+  });
+}
+
+let lastRecovery = 0;
+async function recoverSignin(ses, wc) {
+  if (Date.now() - lastRecovery < 10 * 60 * 1000) return; // once per 10 min: never loop
+  lastRecovery = Date.now();
+  try {
+    await ses.clearStorageData({ origin: 'https://accounts.google.com' });
+    await ses.clearCache();
+  } catch { /* best effort */ }
+  if (wc.isDestroyed()) return;
+  // Go back to where the sign-in started (keeps the "continue" target).
+  let restart = 'https://accounts.google.com/signin';
+  try {
+    const entries = wc.navigationHistory.getAllEntries();
+    const start = entries.find((e) => /^https:\/\/accounts\.google\.com\//.test(e.url) && !/\/rejected/.test(e.url));
+    if (start) restart = start.url;
+  } catch { /* ignore */ }
+  wc.loadURL(restart).catch(() => {});
 }
 
 module.exports = { setup, SIGNIN_HOSTS };

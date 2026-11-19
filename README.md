@@ -31,7 +31,8 @@ The installer is per-user (no admin needed) and registers Coffee as a browser, s
 - **Downloads** go straight to your downloads folder. The panel has progress, speed, pause/resume and show in folder.
 - **Bookmarks.** Use the star or Ctrl+D, then rename inline. Bookmarks appear in the bookmarks bar and on the new tab page.
 - **Themes.** Presets are Coffee, Latte, Dark, Light, Midnight, Matcha, Rosé and OLED, plus a custom theme built from four colors (background, surface, text, accent). Every other shade is derived from those four.
-- **Google sign-in works.** Google rejects embedded Chromium browsers ("This browser or app may not be secure"). On `accounts.google.com` only, Coffee presents itself consistently as Firefox, in both request headers and `navigator.*`; see `src/main/compat.js`. Every other site, including the rest of Google, sees normal Chrome.
+- **Google sign-in works.** Google rejects embedded Chromium browsers ("This browser or app may not be secure"). On `accounts.google.com` only, Coffee presents itself consistently as Firefox, in both request headers and `navigator.*`; see `src/main/compat.js`. Every other site, including the rest of Google, sees normal Chrome. If Google still shows its rejection page (it remembers earlier rejections in the sign-in site's stored data), Coffee clears `accounts.google.com`'s data once and restarts the sign-in.
+- **No Windows Security popups on login pages.** Sites request passkey *autofill*. Chrome shows that inside its own dropdown, but Electron would hand it to a Windows dialog, so Coffee reports passkey autofill as unavailable. Clicking "Sign in with a passkey" still uses Windows Hello.
 - Address bar suggestions from history and bookmarks, find in page, per-tab zoom, permission prompts, friendly error pages, and session restore.
 
 ## Performance
@@ -70,3 +71,7 @@ build/         app icon + installer.nsh (default-browser registration)
 ```
 
 Layout metrics (sidebar 56px, top bar 46px, bookmarks bar 32px; the page runs to the right and bottom window edges) are defined in both `src/main/main.js` and `src/ui/ui.css`. Change them together.
+
+## License
+
+Coffee is free software under the [GNU General Public License v3.0 or later](LICENSE). It bundles uBlock Origin's scriptlets (GPL-3.0); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

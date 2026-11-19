@@ -120,6 +120,14 @@ function layout() {
   tab.view.setBorderRadius(radius);
 }
 
+/** Pin a privileged webContents to its own page: no navigation, popups, or webviews. */
+function lockDown(wc) {
+  wc.on('will-navigate', (e) => e.preventDefault());
+  wc.on('will-redirect', (e) => e.preventDefault());
+  wc.setWindowOpenHandler(() => ({ action: 'deny' }));
+  wc.on('will-attach-webview', (e) => e.preventDefault());
+}
+
 function createWindow() {
   const s = data.settings.data;
   const b = s.windowBounds || {};
@@ -153,6 +161,10 @@ function createWindow() {
   overlay.onState = (type) => emit('overlay', type);
   overlay.wc.on('before-input-event', (e, input) => onInput(e, input, null));
   ui.on('before-input-event', (e, input) => onInput(e, input, null));
+  // The chrome and overlay carry the privileged preload: never let them load
+  // anything else (e.g. a link or file dropped onto the title bar).
+  lockDown(ui);
+  lockDown(overlay.wc);
 
   const sendState = () => { layout(); emit('window', windowState()); };
   win.on('resize', layout);
@@ -873,7 +885,7 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
 
 function registerInternalProtocol(ses) {
   const hosts = new Set(['newtab', 'settings', 'error']);
-  ses.protocol.handle('coffee', (req) => {
+  ses.protocol.handle('coffee', async (req) => {
     const u = new URL(req.url);
     if (!hosts.has(u.hostname)) return new Response('Not found', { status: 404 });
     // /shared/* is served on every host so pages can use it same-origin.
@@ -881,8 +893,13 @@ function registerInternalProtocol(ses) {
     const rel = u.pathname === '/' ? 'index.html' : decodeURIComponent(u.pathname.slice(shared ? 8 : 1));
     const base = path.join(PAGES, shared ? 'shared' : u.hostname);
     const file = path.normalize(path.join(base, rel));
-    if (!file.startsWith(base)) return new Response('Forbidden', { status: 403 });
-    return net.fetch(pathToFileURL(file).toString());
+    if (!file.startsWith(base + path.sep)) return new Response('Forbidden', { status: 403 });
+    const res = await net.fetch(pathToFileURL(file).toString());
+    // Internal pages may never be framed (blocks clickjacking of Settings).
+    const headers = new Headers(res.headers);
+    headers.set('Content-Security-Policy', "frame-ancestors 'none'");
+    headers.set('X-Frame-Options', 'DENY');
+    return new Response(res.body, { status: res.status, headers });
   });
 }
 
