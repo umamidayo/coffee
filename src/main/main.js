@@ -24,8 +24,13 @@ if (!app.requestSingleInstanceLock()) {
   process.exit(0);
 }
 
+// Electron honors a single registration before startup, so every custom
+// scheme goes here. `crx` serves extension icons (only used when extensions
+// are turned on); registering it here also stops the extension library from
+// re-registering schemes and dropping `coffee`.
 protocol.registerSchemesAsPrivileged([
   { scheme: 'coffee', privileges: { standard: true, secure: true, supportFetchAPI: true, codeCache: true } },
+  { scheme: 'crx', privileges: { bypassCSP: true } },
 ]);
 
 // Electron's honest user agent, kept for Google sign-in (see compat.js).
@@ -264,6 +269,7 @@ function createWindow() {
       sessionTimer = setTimeout(() => tabs && tabs.saveSession(), 2000);
     },
     activated: (tab) => {
+      if (ext) ext.tabSelected(tab);
       if (overlay.isOpen()) overlay.close();
       if (tab.url.startsWith(NEWTAB)) {
         // A freshly shown page takes keyboard focus as it attaches and loads,
@@ -309,6 +315,8 @@ function createWindow() {
     zoom: (tab, dir) => zoom(dir, tab),
     privateSession: getPrivateSession,
     privateEnded: endPrivateBrowsing,
+    viewCreated: (tab) => { if (ext) ext.tabCreated(tab, win); },
+    viewDestroyed: (tab) => { if (ext) ext.tabRemoved(tab); },
   });
 }
 
@@ -383,6 +391,7 @@ function publicSettings() {
     tabLayout: tabsOnTop() ? 'horizontal' : 'vertical',
     compactSidebar: !!data.settings.data.compactSidebar,
     tabTitles: data.settings.data.tabTitles !== false,
+    extensions: !!ext,
     adblock: s.adblock,
     searchEngine: s.searchEngine,
     update: updater.status,
@@ -390,10 +399,15 @@ function publicSettings() {
   };
 }
 
-function openSettings() {
+function openSettings(section) {
+  const url = `coffee://settings/${section ? `#${String(section).replace(/[^a-z-]/g, '')}` : ''}`;
   const existing = tabs.tabs.find((t) => t.url.startsWith('coffee://settings'));
-  if (existing) tabs.activate(existing.id);
-  else tabs.create({ url: 'coffee://settings/' });
+  if (existing) {
+    tabs.activate(existing.id);
+    if (section && existing.wc) existing.wc.loadURL(url).catch(() => {});
+  } else {
+    tabs.create({ url });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +560,10 @@ function pageMenu(tab, params) {
       { label: 'View page source', accel: 'Ctrl+U', disabled: !/^https?:/.test(tab.url), action: () => navigate(`view-source:${tab.url}`, { newTab: true }) },
       sep,
     );
+  }
+  if (ext && !tab.private) {
+    const extra = ext.contextMenuItems(wc, params);
+    if (extra.length) items.push(...extra, sep);
   }
   items.push({ label: 'Inspect', accel: 'F12', action: () => { wc.inspectElement(params.x, params.y); } });
 
@@ -752,6 +770,61 @@ function shieldMenu(rect) {
 }
 
 // ---------------------------------------------------------------------------
+// Extensions (opt-in; nothing is loaded unless the setting is on)
+// ---------------------------------------------------------------------------
+
+let ext = null;
+
+async function startExtensions() {
+  const mod = require('./extensions');
+  await mod.init({
+    ses: webSession,
+    uiSession: session.defaultSession,
+    win: () => win,
+    tabs,
+    confirmInstall: confirmExtensionInstall,
+  });
+  ext = mod;
+  emit('settings', publicSettings());
+}
+
+/** Ask before an extension is installed, listing what it may access. */
+function confirmExtensionInstall(details) {
+  return new Promise((resolve) => {
+    const m = details.manifest || {};
+    const perms = [...(m.permissions || []), ...(m.host_permissions || [])].map(String);
+    const readable = [];
+    if (perms.some((p) => /<all_urls>|^\*:\/\/\*\/\*|^https?:\/\/\*\/\*/.test(p))) readable.push('Read and change data on all websites');
+    else if (perms.some((p) => /:\/\//.test(p))) readable.push('Read and change data on some websites');
+    if (perms.includes('tabs') || perms.includes('history')) readable.push('Read your browsing history');
+    if (perms.includes('cookies')) readable.push('Read and change cookies');
+    if (perms.includes('downloads')) readable.push('Manage your downloads');
+    if (perms.includes('clipboardRead')) readable.push('Read your clipboard');
+    const [w, h] = win.getContentSize();
+    const width = 380 + 2 * M;
+    const height = 150 + readable.length * 22 + 2 * M;
+    let icon = '';
+    try { icon = details.icon && !details.icon.isEmpty() ? details.icon.resize({ width: 32 }).toDataURL() : ''; } catch { /* no icon */ }
+    win.focus();
+    overlay.open('extinstall', { x: (w - width) / 2, y: Math.max(TOPBAR_H, h / 2 - height), width, height }, {
+      name: details.localizedName || m.name || 'this extension',
+      icon,
+      permissions: readable,
+    }, { focus: true, onPick: (p) => resolve(!!p.ok), onClose: () => resolve(false) });
+  });
+}
+
+function showExtensionsPanel(rect) {
+  if (rect) lastExtRect = rect;
+  const r = lastExtRect || { x: win.getContentSize()[0] - 200, y: 8, width: 32, height: 32 };
+  const list = ext ? ext.list() : [];
+  const width = 320 + 2 * M;
+  const height = 50 + Math.max(1, Math.min(list.length, 7)) * 52 + 54 + 2 * M;
+  overlay.open('extensions', { x: r.x + r.width - width + M + 4, y: r.y + r.height + 4 - M, width, height }, { list }, { focus: true });
+}
+let lastExtRect = null;
+
+// ---------------------------------------------------------------------------
 // Sessions: the normal profile and private browsing
 // ---------------------------------------------------------------------------
 
@@ -890,6 +963,9 @@ function setSetting(key, value) {
     case 'newtabShortcuts':
       s.newtabShortcuts = !!value;
       break;
+    case 'extensions':
+      s.extensions = !!value; // takes effect after a restart
+      break;
     case 'sleepMinutes':
       s.sleepMinutes = [0, 5, 15, 30, 60, 120].includes(Number(value)) ? Number(value) : 30;
       break;
@@ -922,6 +998,8 @@ function settingsPayload() {
     compactSidebar: !!s.compactSidebar,
     tabTitles: s.tabTitles !== false,
     newtabShortcuts: s.newtabShortcuts !== false,
+    extensions: !!s.extensions,
+    extensionsRunning: !!ext,
     hiddenShortcuts: (s.hiddenShortcuts || []).length,
     sleepMinutes: s.sleepMinutes,
     restoreSession: s.restoreSession,
@@ -960,7 +1038,7 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch']);
 const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run']);
 
 function senderKind(e) {
@@ -1084,7 +1162,8 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       { label: 'Find in page', accel: 'Ctrl+F', action: () => emit('find:open') },
       { label: 'Full screen', accel: 'F11', checked: win.isFullScreen(), action: () => win.setFullScreen(!win.isFullScreen()) },
       { sep: true },
-      { label: 'Settings & themes', accel: 'Ctrl+,', action: openSettings },
+      { label: 'Extensions', action: () => (ext ? showExtensionsPanel() : openSettings('extensions')) },
+      { label: 'Settings', accel: 'Ctrl+,', action: () => openSettings() },
     ]); break;
     case 'find': {
       const wc = activeWc();
@@ -1101,7 +1180,25 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       break;
     }
     case 'zoom:reset': zoom(0); break;
-    case 'settings:open': openSettings(); break;
+    case 'settings:open': openSettings(p.section); break;
+    case 'app:relaunch':
+      // Applies settings that need a restart (e.g. extensions).
+      tabs.saveSession();
+      data.Store.flushAll();
+      app.relaunch();
+      app.quit();
+      break;
+    case 'ext:panel': showExtensionsPanel(p.rect); break;
+    case 'ext:remove':
+      if (ext) ext.remove(String(p.id || '')).then(() => { emit('ext:changed'); if (overlay.isOpen('extensions')) showExtensionsPanel(); });
+      break;
+    case 'ext:options': {
+      const e = ext && ext.list().find((x) => x.id === p.id);
+      if (e && e.options) tabs.create({ url: `chrome-extension://${e.id}/${e.options.replace(/^\//, '')}` });
+      overlay.close();
+      break;
+    }
+    case 'ext:store': navigate('https://chromewebstore.google.com/category/extensions', { newTab: true }); overlay.close(); break;
     case 'settings:set': setSetting(p.key, p.value); break;
     case 'history:clear': data.clearHistory(); break;
     case 'data:clear':
@@ -1213,6 +1310,10 @@ app.whenReady().then(async () => {
   updater.init(() => { emit('settings', publicSettings()); broadcastSettings(); });
 
   attachDownloads(webSession);
+
+  if (data.settings.data.extensions) {
+    startExtensions().catch((err) => console.error('Extensions failed to start:', err));
+  }
 
   // Give the blocker a moment so the first page loads with blocking on.
   await Promise.race([blockerReady, new Promise((r) => setTimeout(r, 1200))]);

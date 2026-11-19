@@ -252,6 +252,66 @@
     requestAnimationFrame(() => { field.focus(); field.select(); });
   }
 
+  // ---------- extensions panel ----------
+  function renderExtensions(data) {
+    const p = panel('menu extp');
+    p.innerHTML = `<div class="extp-head">Extensions</div><div class="extp-list"></div>
+      <div class="msep"></div><div class="mi extp-store"><span class="check">${Icons.plus}</span><span class="label">Get extensions from the Chrome Web Store</span></div>`;
+    const list = p.querySelector('.extp-list');
+    if (!data.list.length) {
+      list.innerHTML = '<div class="extp-empty">No extensions yet</div>';
+    }
+    for (const e of data.list) {
+      const r = document.createElement('div');
+      r.className = 'extp-item';
+      const icon = new Image();
+      icon.className = 'extp-ico';
+      icon.alt = '';
+      icon.src = `crx://extension-icon/${encodeURIComponent(e.id)}/32/2?partition=persist:web`;
+      icon.onerror = () => { icon.replaceWith(Object.assign(document.createElement('span'), { className: 'extp-ico extp-letter', textContent: (e.name || '?').charAt(0).toUpperCase() })); };
+      const meta = document.createElement('div');
+      meta.className = 'extp-meta';
+      meta.innerHTML = '<div class="extp-name"></div><div class="extp-ver"></div>';
+      meta.firstChild.textContent = e.name;
+      meta.lastChild.textContent = `Version ${e.version}`;
+      r.title = e.description || e.name;
+      const acts = document.createElement('div');
+      acts.className = 'extp-acts';
+      if (e.options) {
+        const o = Object.assign(document.createElement('button'), { className: 'act', title: 'Options', innerHTML: Icons.settings });
+        o.onclick = () => api.send('ext:options', { id: e.id });
+        acts.appendChild(o);
+      }
+      const rm = Object.assign(document.createElement('button'), { className: 'act', title: 'Remove', innerHTML: Icons.trash });
+      rm.onclick = () => { r.classList.add('removing'); api.send('ext:remove', { id: e.id }); };
+      acts.appendChild(rm);
+      r.append(icon, meta, acts);
+      list.appendChild(r);
+    }
+    const store = p.querySelector('.extp-store');
+    store.onclick = () => api.send('ext:store');
+    store.addEventListener('mouseenter', () => store.classList.add('sel'));
+    store.addEventListener('mouseleave', () => store.classList.remove('sel'));
+  }
+
+  // ---------- extension install confirmation ----------
+  function renderExtInstall(data) {
+    const p = panel('form extinstall');
+    p.innerHTML = `<h1><span class="exti-ico"></span><span class="exti-title"></span></h1>
+      <p class="exti-lead"></p><ul class="exti-perms"></ul>
+      <div class="row"><button class="btn" id="exti-cancel">Cancel</button><button class="btn primary" id="exti-ok">Add extension</button></div>`;
+    const ico = p.querySelector('.exti-ico');
+    if (data.icon) ico.appendChild(Object.assign(new Image(), { src: data.icon, alt: '' }));
+    else ico.innerHTML = Icons.puzzle;
+    p.querySelector('.exti-title').textContent = `Add “${data.name}”?`;
+    p.querySelector('.exti-lead').textContent = data.permissions.length ? 'It will be able to:' : 'It doesn’t ask for any special access.';
+    const ul = p.querySelector('.exti-perms');
+    for (const perm of data.permissions) ul.appendChild(Object.assign(document.createElement('li'), { textContent: perm }));
+    p.querySelector('#exti-ok').onclick = () => pick({ ok: true });
+    p.querySelector('#exti-cancel').onclick = close;
+    requestAnimationFrame(() => p.querySelector('#exti-cancel').focus());
+  }
+
   // ---------- confirmation ----------
   function renderConfirm(data) {
     const p = panel('form');
@@ -311,6 +371,8 @@
     bmfolder: renderFolder,
     folder: renderFolderEditor,
     confirm: renderConfirm,
+    extensions: renderExtensions,
+    extinstall: renderExtInstall,
     menu: renderMenu,
     suggest: renderSuggest,
     tooltip: renderTip,

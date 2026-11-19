@@ -26,5 +26,7 @@ Filter lists, fetched from their publishers on first run and every 6 hours:
 | @ghostery/adblocker, @ghostery/adblocker-electron | MPL-2.0 |
 | electron-updater | MIT |
 | tldts-experimental | MIT |
+| electron-chrome-extensions (only loaded when extensions are turned on) | MIT |
+| electron-chrome-web-store (only loaded when extensions are turned on) | MIT |
 
 Full license texts for npm packages are included in their directories under `node_modules/`.

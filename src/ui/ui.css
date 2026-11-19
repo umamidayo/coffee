@@ -203,6 +203,23 @@ body.private-active #loading-bar .fill { background: linear-gradient(90deg, tran
 #downloads-btn.bump > svg:not(.ring) { animation: bump .6s var(--spring); }
 @keyframes bump { 0% { transform: translateY(-6px); opacity: .3; } 100% { transform: none; opacity: 1; } }
 
+/* Extension toolbar actions */
+#ext-actions { display: flex; gap: 2px; align-items: center; }
+#ext-actions[hidden] { display: none; }
+#ext-btn[hidden], #update-btn[hidden] { display: none; }
+.ext-action {
+  position: relative; width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+  transition: background .15s;
+}
+.ext-action:hover { background: var(--hover); }
+.ext-action img { width: 18px; height: 18px; }
+.ext-action .letter { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font: 600 10px/1 var(--font); background: var(--hover); color: var(--muted); }
+.ext-action .badge {
+  position: absolute; right: 1px; bottom: 2px; min-width: 14px; height: 13px; padding: 0 3px; border-radius: 7px;
+  font: 700 8.5px/13px var(--font); text-align: center; color: #fff; background: #555;
+  box-shadow: 0 0 0 1.5px var(--bg);
+}
+
 /* Update ready */
 #update-btn {
   height: 26px; padding: 0 11px; margin: 0 4px; border-radius: 8px; flex: none; align-self: center;

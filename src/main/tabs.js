@@ -70,6 +70,7 @@ class Tab {
       internal: isInternal(this.url) && !this.url.startsWith('coffee://error/'),
       newtab: this.url.startsWith(NEWTAB),
       private: this.private,
+      wcId: wc ? wc.id : -1,
       canGoBack: wc ? wc.navigationHistory.canGoBack() : false,
       canGoForward: wc ? wc.navigationHistory.canGoForward() : false,
       zoom: this.zoom,
@@ -93,6 +94,7 @@ class Tab {
       },
     });
     this.view = view;
+    if (this.mgr.hooks.viewCreated) this.mgr.hooks.viewCreated(this);
     view.setBorderRadius(this.mgr.radius());
     this.applyBackground();
     this.bind(view.webContents);
@@ -238,6 +240,7 @@ class Tab {
 
   destroyView() {
     const view = this.view;
+    if (view && this.mgr.hooks.viewDestroyed) this.mgr.hooks.viewDestroyed(this);
     this.view = null;
     if (!view) return;
     try { this.mgr.win.contentView.removeChildView(view); } catch { /* not attached */ }

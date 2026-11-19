@@ -21,6 +21,7 @@ const settings = new Store('settings', {
   newtabShortcuts: true,   // shortcut tiles on the new tab page
   hiddenShortcuts: [],     // hosts removed from the new tab page
   onboarded: false,        // finished (or skipped) the welcome setup
+  extensions: false,       // opt-in Chrome extension support (takes effect on restart)
   sleepMinutes: 30,
   restoreSession: true,
   theme: { preset: 'coffee', custom: null },

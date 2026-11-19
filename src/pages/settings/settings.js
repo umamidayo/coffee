@@ -15,6 +15,103 @@
     toast.timer = setTimeout(() => t.classList.remove('on'), 1800);
   }
 
+  // =====================================================================
+  // Navigation: category icons, scroll spy, deep links (#extensions)
+  // =====================================================================
+  const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const NAV_ICONS = {
+    palette: svg('<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1 0 1.6-.8 1.6-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.2 0-.9.8-1.7 1.7-1.7H16a4.5 4.5 0 0 0 4.5-4.5C20.5 6.7 16.7 3.5 12 3.5z"/><circle cx="7.5" cy="11" r="1" fill="currentColor"/><circle cx="10" cy="7.5" r="1" fill="currentColor"/><circle cx="14.5" cy="7.5" r="1" fill="currentColor"/>'),
+    tabs: svg('<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 9.5h17M9 5v4.5"/>'),
+    home: svg('<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.5V19h12V9.5"/>'),
+    search: svg('<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>'),
+    shield: svg('<path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.3-7.5 9.5-4.3-1.2-7.5-4.9-7.5-9.5V6z"/>'),
+    bolt: svg('<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>'),
+    download: svg('<path d="M12 4v11"/><path d="M7 10.5l5 5 5-5"/><path d="M5 20h14"/>'),
+    import: svg('<path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14"/><path d="M4 12h11"/><path d="M11 8l4 4-4 4"/>'),
+    puzzle: svg('<path d="M9 4.5a2 2 0 0 1 4 0V6h3.5a1.5 1.5 0 0 1 1.5 1.5V11h-1.5a2 2 0 0 0 0 4H18v3.5a1.5 1.5 0 0 1-1.5 1.5H13v-1.5a2 2 0 0 0-4 0V20H5.5A1.5 1.5 0 0 1 4 18.5V15h1.5a2 2 0 0 0 0-4H4V7.5A1.5 1.5 0 0 1 5.5 6H9z"/>'),
+    info: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/>'),
+  };
+  const links = [...document.querySelectorAll('#navLinks a')];
+  for (const a of links) a.insertAdjacentHTML('afterbegin', NAV_ICONS[a.dataset.i] || '');
+  const sections = [...document.querySelectorAll('main section')];
+
+  function highlight(id) {
+    for (const a of links) a.classList.toggle('on', a.getAttribute('href') === `#${id}`);
+  }
+  // The section nearest the top of the viewport is the current one.
+  let spyRaf = 0;
+  function spy() {
+    cancelAnimationFrame(spyRaf);
+    spyRaf = requestAnimationFrame(() => {
+      const visible = sections.filter((x) => !x.hidden);
+      let current = visible[0];
+      for (const sec of visible) if (sec.getBoundingClientRect().top <= 120) current = sec;
+      if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 4) current = visible[visible.length - 1];
+      if (current) highlight(current.id);
+    });
+  }
+  window.addEventListener('scroll', spy, { passive: true });
+  for (const a of links) {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      const target = $(a.getAttribute('href').slice(1));
+      if (!target) return;
+      history.replaceState(null, '', a.getAttribute('href'));
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      highlight(target.id);
+    });
+  }
+  function jumpToHash() {
+    const id = location.hash.slice(1);
+    const target = id && $(id);
+    if (target) { target.scrollIntoView({ block: 'start' }); highlight(id); } else spy();
+  }
+  window.addEventListener('hashchange', jumpToHash);
+
+  // =====================================================================
+  // Search: show only matching rows (and sections whose topic matches)
+  // =====================================================================
+  const search = $('search');
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    let any = false;
+    for (const sec of sections) {
+      const topic = `${sec.querySelector('h2').textContent} ${sec.dataset.keywords || ''}`.toLowerCase();
+      const topicHit = !!q && topic.includes(q);
+      const rows = [...sec.querySelectorAll('.row')];
+      let rowHit = false;
+      for (const r of rows) {
+        const hit = !q || topicHit || r.textContent.toLowerCase().includes(q);
+        r.classList.toggle('filtered', !hit);
+        r.style.display = hit ? '' : 'none';
+        if (hit) rowHit = true;
+      }
+      // Sections without rows (none) or with the theme grid count as topic-only.
+      const show = !q || topicHit || rowHit;
+      sec.hidden = !show;
+      if (show) any = true;
+      const link = links.find((a) => a.getAttribute('href') === `#${sec.id}`);
+      if (link) link.classList.toggle('dim', !show);
+    }
+    $('noResults').hidden = any;
+    $('noResults').querySelector('span').textContent = search.value.trim();
+    if (q) window.scrollTo({ top: 0 });
+    spy();
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey && e.key.toLowerCase() === 'f') || (e.key === '/' && document.activeElement !== search)) {
+      e.preventDefault();
+      search.focus();
+      search.select();
+    } else if (e.key === 'Escape' && document.activeElement === search && search.value) {
+      search.value = '';
+      search.dispatchEvent(new Event('input'));
+    }
+  });
+
+  // =====================================================================
+  // Appearance
+  // =====================================================================
   function preview(p) {
     return `<div class="preview" style="background:${p.bg}">
       <div class="pv-side"><i style="background:${p.accent}"></i><i style="background:${p.text}"></i><i style="background:${p.text}"></i></div>
@@ -73,8 +170,10 @@
     });
   }
 
+  // =====================================================================
+  // Render everything from the current settings
+  // =====================================================================
   function render() {
-    $('version').textContent = s.version;
     const engine = $('engine');
     engine.innerHTML = s.engines.map((e) => `<option value="${e.id}">${e.name}</option>`).join('');
     engine.value = s.searchEngine;
@@ -85,22 +184,38 @@
       b.setAttribute('aria-checked', String(on));
     }
     $('compactSidebar').checked = !!s.compactSidebar;
+    $('compactRow').classList.toggle('disabled', s.tabLayout === 'horizontal');
     $('tabTitles').checked = s.tabTitles !== false;
     $('newtabShortcuts').checked = s.newtabShortcuts !== false;
     const n = s.hiddenShortcuts || 0;
     $('hiddenCount').textContent = n ? `${n} site${n === 1 ? '' : 's'} hidden from the new tab page` : 'Remove a shortcut with the × that appears when you hover it';
     $('restoreShortcuts').disabled = !n;
-    $('compactRow').classList.toggle('disabled', s.tabLayout === 'horizontal');
     $('restoreSession').checked = s.restoreSession;
     $('adblock').checked = s.adblock;
     $('blocked').textContent = `${s.blockedTotal.toLocaleString()} ads and trackers blocked so far`;
     $('sleepMinutes').value = String(s.sleepMinutes);
     $('downloadDir').textContent = s.downloadDir;
-    $('about').textContent = `Coffee ${s.version} · Chromium ${s.chrome} · Electron ${s.electron}`;
+    $('aboutLine').textContent = `Coffee ${s.version} · Chromium ${s.chrome} · Electron ${s.electron}`;
+    renderExtensions();
     renderThemes();
     renderUpdate();
   }
 
+  // ---- extensions (applies after a restart) ----
+  function renderExtensions() {
+    $('extensionsOn').checked = !!s.extensions;
+    const pending = !!s.extensions !== !!s.extensionsRunning;
+    $('extRestartRow').hidden = !pending;
+    $('extStoreRow').hidden = !(s.extensions && s.extensionsRunning);
+    $('extInfo').textContent = pending
+      ? (s.extensions ? 'Extensions turn on after a restart' : 'Extensions turn off after a restart')
+      : (s.extensionsRunning ? 'Extensions are on' : 'Coffee loads nothing extra while this is off');
+  }
+  $('extensionsOn').onchange = (e) => { s.extensions = e.target.checked; set('extensions', s.extensions); renderExtensions(); };
+  $('relaunch').onclick = () => api.send('app:relaunch');
+  $('openStore').onclick = () => api.send('nav:go', { url: 'https://chromewebstore.google.com/category/extensions' });
+
+  // ---- updates ----
   function renderUpdate() {
     const u = s.update || {};
     const btn = $('upd-btn');
@@ -121,6 +236,7 @@
   }
   $('upd-btn').onclick = () => api.send(s.update && s.update.state === 'ready' ? 'update:install' : 'update:check');
 
+  // ---- simple controls ----
   $('engine').onchange = (e) => set('searchEngine', e.target.value);
   $('bookmarksBar').onchange = (e) => set('bookmarksBar', e.target.checked);
   for (const b of document.querySelectorAll('#tabLayout button')) b.onclick = () => set('tabLayout', b.dataset.v);
@@ -175,8 +291,13 @@
 
   api.on('settings', (next) => {
     const editingCustom = s && s.theme.preset === 'custom' && document.activeElement && document.activeElement.type === 'color';
+    // Keep the user's not-yet-applied extensions choice while it awaits a restart.
     s = next;
     if (!editingCustom) render();
   });
-  api.invoke('settings:get').then((d) => { s = d; render(); });
+  api.invoke('settings:get').then((d) => {
+    s = d;
+    render();
+    requestAnimationFrame(jumpToHash);
+  });
 })();

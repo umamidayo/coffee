@@ -43,6 +43,12 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - New users are offered this during setup, or go to **Settings → Import** at any time. Your old browser isn't changed.
 - Saved passwords and cookies can't be imported. Chrome locks them so only Chrome can read them.
 
+**Extensions (optional)**
+- Off by default, so Coffee stays lean if you don't use them.
+- Turn on **Allow extensions** in Settings to install extensions from the Chrome Web Store with its "Add to Coffee" button.
+- Extension buttons appear in the toolbar. The puzzle button lets you manage or remove them.
+- Most extensions work, but not every Chrome feature is available yet. Extensions don't run in private tabs.
+
 **New tab page**
 - A clock and the date, plus shortcuts to your favorite sites.
 - Hover a shortcut and click × to remove it.
@@ -53,7 +59,7 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - Downloads panel with progress, pause and resume, and *Show in folder*.
 - Find in page, zoom, and full screen.
 
-Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or `Ctrl+,`).
+Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or `Ctrl+,`). Settings are grouped by category, and you can search them.
 
 ## Keyboard shortcuts
 

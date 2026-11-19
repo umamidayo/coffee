@@ -32,6 +32,7 @@
   $('omni-private').title = "Private tab: history isn't saved, and cookies are deleted when you close all private tabs";
   $('downloads-btn').insertAdjacentHTML('afterbegin', Icons.download);
   $('menu-btn').innerHTML = Icons.menu;
+  $('ext-btn').innerHTML = Icons.puzzle;
   $('win-min').innerHTML = Icons.minimize;
   $('win-max').innerHTML = Icons.maximize;
   $('win-close').innerHTML = Icons.winClose;
@@ -402,6 +403,74 @@
     dlBtn.classList.add('bump');
   });
 
+  // =====================================================================
+  // Extensions (only when turned on in Settings)
+  // =====================================================================
+  const extBox = $('ext-actions');
+  const extBtn = $('ext-btn');
+  extBtn.dataset.toggle = 'extensions';
+  extBtn.onclick = () => api.send('ext:panel', { rect: rectOf(extBtn) });
+  let extOn = false;
+  let extState = null;
+  let extRaf = 0;
+  async function refreshExtensions() {
+    if (!extOn) return;
+    try { extState = await api.ext.getState(); } catch { extState = null; }
+    renderExtensions();
+  }
+  function renderExtensions() {
+    cancelAnimationFrame(extRaf);
+    extRaf = requestAnimationFrame(() => {
+      const t = active();
+      const tabId = t && t.wcId > 0 ? t.wcId : (extState && extState.activeTabId) || -1;
+      const actions = (extState && extState.actions) || [];
+      extBox.hidden = !extOn || !actions.length;
+      extBox.textContent = '';
+      for (const a of actions.slice(0, 8)) {
+        const tabInfo = (a.tabs && a.tabs[tabId]) || {};
+        const info = { ...a, ...tabInfo };
+        const b = el('button', 'ext-action');
+        b.title = info.title || a.title || '';
+        const qs = new URLSearchParams({ tabId: String(tabId), partition: 'persist:web' });
+        if (info.iconModified) qs.set('t', info.iconModified);
+        const img = new Image();
+        img.alt = '';
+        img.draggable = false;
+        img.src = `crx://extension-icon/${a.id}/32/2?${qs}`;
+        img.onerror = () => { img.replaceWith(el('span', 'letter', (b.title || '?').charAt(0).toUpperCase())); };
+        b.appendChild(img);
+        if (info.text) {
+          const badge = el('span', 'badge');
+          badge.textContent = info.text;
+          if (info.color) badge.style.background = info.color;
+          b.appendChild(badge);
+        }
+        const fire = (e) => {
+          if (e.type === 'contextmenu') e.preventDefault();
+          const r = rectOf(b);
+          api.send('overlay:close');
+          api.ext.activate({ eventType: e.type, extensionId: a.id, tabId, alignment: 'bottom left', anchorRect: { x: r.x, y: r.y, width: r.width, height: r.height } });
+        };
+        b.addEventListener('click', fire);
+        b.addEventListener('contextmenu', fire);
+        extBox.appendChild(b);
+      }
+    });
+  }
+  function applyExtensions(on) {
+    extBtn.hidden = !on;
+    if (on === extOn) return;
+    extOn = on;
+    if (on) {
+      api.ext.observe().catch(() => {});
+      api.ext.onUpdate(refreshExtensions);
+      refreshExtensions();
+    } else {
+      extBox.hidden = true;
+    }
+  }
+  api.on('ext:changed', refreshExtensions);
+
   const menuBtn = $('menu-btn');
   menuBtn.dataset.toggle = 'menu';
   menuBtn.onclick = () => {
@@ -547,6 +616,7 @@
     state.settings = s;
     document.body.classList.toggle('no-bookmarks', !s.bookmarksBarShown);
     applyLayout(s);
+    applyExtensions(!!s.extensions);
     const up = s.update || {};
     $('update-btn').hidden = up.state !== 'ready';
     if (up.version) $('update-btn').title = `Coffee ${up.version} is ready — restart to install`;
@@ -570,6 +640,7 @@
     renderTabs();
     renderOmni();
     renderLoading();
+    if (extOn) renderExtensions();
   });
   api.on('bookmarks', (b) => { state.bookmarks = b; renderBookmarks(); renderOmni(); });
   api.on('settings', applySettings);

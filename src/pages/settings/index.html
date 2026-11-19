@@ -8,157 +8,209 @@
   <link rel="stylesheet" href="settings.css">
 </head>
 <body>
-  <main>
-    <header class="head">
+  <div class="shell">
+    <!-- Category navigation (sidebar on wide windows, chips on narrow ones) -->
+    <nav class="nav">
       <h1>Settings</h1>
-      <p>Coffee <span id="version"></span></p>
-    </header>
-
-    <section>
-      <h2>Theme</h2>
-      <div class="themes" id="themes"></div>
-      <div class="custom" id="custom" hidden>
-        <div class="custom-grid">
-          <label class="swatch"><input type="color" data-k="bg"><span>Background</span></label>
-          <label class="swatch"><input type="color" data-k="surface"><span>Surface</span></label>
-          <label class="swatch"><input type="color" data-k="text"><span>Text</span></label>
-          <label class="swatch"><input type="color" data-k="accent"><span>Accent</span></label>
-        </div>
-        <p class="hint">Pick four colors. Coffee works out every other shade from them.</p>
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></svg>
+        <input id="search" type="search" placeholder="Search settings" spellcheck="false" autocomplete="off">
+      </label>
+      <div class="nav-links" id="navLinks">
+        <a href="#appearance" data-i="palette">Appearance</a>
+        <a href="#tabs" data-i="tabs">Tabs</a>
+        <a href="#newtab" data-i="home">New tab page</a>
+        <a href="#search-engine" data-i="search">Search</a>
+        <a href="#privacy" data-i="shield">Privacy</a>
+        <a href="#startup" data-i="bolt">Startup &amp; performance</a>
+        <a href="#downloads" data-i="download">Downloads</a>
+        <a href="#import" data-i="import">Import</a>
+        <a href="#extensions" data-i="puzzle">Extensions</a>
+        <a href="#about" data-i="info">About</a>
       </div>
-    </section>
+    </nav>
 
-    <section>
-      <h2>Tabs</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Tab position</b><span>Vertical icons on the side, or tabs with titles along the top</span></div>
-          <div class="segmented" id="tabLayout" role="radiogroup">
-            <button data-v="vertical" role="radio">Side</button>
-            <button data-v="horizontal" role="radio">Top</button>
+    <main id="content">
+      <!-- Appearance -->
+      <section id="appearance" data-keywords="theme colors dark light custom accent bookmarks bar look">
+        <header><h2>Appearance</h2><p>Colors, themes and the bookmarks bar.</p></header>
+        <div class="themes" id="themes"></div>
+        <div class="custom" id="custom" hidden>
+          <div class="custom-grid">
+            <label class="swatch"><input type="color" data-k="bg"><span>Background</span></label>
+            <label class="swatch"><input type="color" data-k="surface"><span>Surface</span></label>
+            <label class="swatch"><input type="color" data-k="text"><span>Text</span></label>
+            <label class="swatch"><input type="color" data-k="accent"><span>Accent</span></label>
+          </div>
+          <p class="hint">Pick four colors. Coffee works out every other shade from them.</p>
+        </div>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Show bookmarks bar</b><span>Appears under the address bar once you have bookmarks · Ctrl+Shift+B</span></div>
+            <label class="switch"><input type="checkbox" id="bookmarksBar"><i></i></label>
           </div>
         </div>
-        <div class="row" id="titlesRow">
-          <div class="txt"><b>Show tab titles</b><span>Titles on top tabs and in the compact sidebar. Off: icons only</span></div>
-          <label class="switch"><input type="checkbox" id="tabTitles"><i></i></label>
-        </div>
-        <div class="row" id="compactRow">
-          <div class="txt"><b>Compact sidebar</b><span>Hide the side tabs; move the mouse to the left edge of the window to show them</span></div>
-          <label class="switch"><input type="checkbox" id="compactSidebar"><i></i></label>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <h2>Import</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Import from another browser</b><span id="importInfo">Bookmarks (with folders and icons) and history</span></div>
-          <select id="importFrom"></select>
-        </div>
-        <div class="row">
-          <div class="txt checks">
-            <label><input type="checkbox" id="importBookmarks" checked> Bookmarks</label>
-            <label><input type="checkbox" id="importHistory" checked> History</label>
+      <!-- Tabs -->
+      <section id="tabs" data-keywords="tabs sidebar vertical horizontal top side compact titles icons">
+        <header><h2>Tabs</h2><p>Where your tabs live and how they look.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Tab position</b><span>Icons down the side, or tabs with titles along the top</span></div>
+            <div class="segmented" id="tabLayout" role="radiogroup">
+              <button data-v="vertical" role="radio">Side</button>
+              <button data-v="horizontal" role="radio">Top</button>
+            </div>
           </div>
-          <button class="btn primary" id="importRun">Import</button>
+          <div class="row" id="compactRow">
+            <div class="txt"><b>Compact sidebar</b><span>Hide the side tabs; move the mouse to the left edge of the window to show them</span></div>
+            <label class="switch"><input type="checkbox" id="compactSidebar"><i></i></label>
+          </div>
+          <div class="row" id="titlesRow">
+            <div class="txt"><b>Show tab titles</b><span>On top tabs and in the compact sidebar. Off shows icons only</span></div>
+            <label class="switch"><input type="checkbox" id="tabTitles"><i></i></label>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <h2>New tab page</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Show shortcuts</b><span>Your bookmarks and most-visited sites under the clock. Off: just the time and date</span></div>
-          <label class="switch"><input type="checkbox" id="newtabShortcuts"><i></i></label>
+      <!-- New tab page -->
+      <section id="newtab" data-keywords="new tab page home shortcuts clock">
+        <header><h2>New tab page</h2><p>What you see when you open a new tab.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Show shortcuts</b><span>Your bookmarks and most-visited sites under the clock. Off shows just the time and date</span></div>
+            <label class="switch"><input type="checkbox" id="newtabShortcuts"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Removed shortcuts</b><span id="hiddenCount"></span></div>
+            <button class="btn" id="restoreShortcuts">Restore</button>
+          </div>
         </div>
-        <div class="row">
-          <div class="txt"><b>Removed shortcuts</b><span id="hiddenCount"></span></div>
-          <button class="btn" id="restoreShortcuts">Restore</button>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <h2>General</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Search engine</b><span>Used when you type something that isn't an address</span></div>
-          <select id="engine"></select>
+      <!-- Search -->
+      <section id="search-engine" data-keywords="search engine google duckduckgo bing brave address bar">
+        <header><h2>Search</h2><p>What happens when you type something that isn't a web address.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Search engine</b><span>Used in the address bar</span></div>
+            <select id="engine"></select>
+          </div>
         </div>
-        <div class="row">
-          <div class="txt"><b>Show bookmarks bar</b><span>Ctrl+Shift+B</span></div>
-          <label class="switch"><input type="checkbox" id="bookmarksBar"><i></i></label>
-        </div>
-        <div class="row">
-          <div class="txt"><b>Setup guide</b><span>Pick your theme, tab layout and search engine step by step</span></div>
-          <button class="btn" id="runSetup">Run again</button>
-        </div>
-        <div class="row">
-          <div class="txt"><b>Continue where you left off</b><span>Reopen your tabs when Coffee starts</span></div>
-          <label class="switch"><input type="checkbox" id="restoreSession"><i></i></label>
-        </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <h2>Privacy</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Block ads &amp; trackers</b><span id="blocked"></span></div>
-          <label class="switch"><input type="checkbox" id="adblock"><i></i></label>
+      <!-- Privacy -->
+      <section id="privacy" data-keywords="privacy ads trackers block history cookies clear data private">
+        <header><h2>Privacy</h2><p>Ad blocking and the data Coffee keeps.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Block ads &amp; trackers</b><span id="blocked"></span></div>
+            <label class="switch"><input type="checkbox" id="adblock"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Browsing history</b><span>Used for address bar suggestions and new tab shortcuts</span></div>
+            <button class="btn" id="clearHistory">Clear</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Cookies &amp; site data</b><span>Signs you out of most sites</span></div>
+            <button class="btn danger" id="clearData">Clear</button>
+          </div>
         </div>
-        <div class="row">
-          <div class="txt"><b>Browsing history</b><span>Used for address bar suggestions and new tab shortcuts</span></div>
-          <button class="btn" id="clearHistory">Clear</button>
-        </div>
-        <div class="row">
-          <div class="txt"><b>Cookies &amp; site data</b><span>Signs you out of most sites</span></div>
-          <button class="btn danger" id="clearData">Clear</button>
-        </div>
-      </div>
-    </section>
+        <p class="note">Tip: press Ctrl+Shift+N for a private tab. Nothing from it is saved after you close it.</p>
+      </section>
 
-    <section>
-      <h2>Performance</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Put inactive tabs to sleep</b><span>Sleeping tabs free their memory and CPU, then reload when you open them</span></div>
-          <select id="sleepMinutes">
-            <option value="0">Never</option>
-            <option value="5">After 5 minutes</option>
-            <option value="15">After 15 minutes</option>
-            <option value="30">After 30 minutes</option>
-            <option value="60">After 1 hour</option>
-            <option value="120">After 2 hours</option>
-          </select>
+      <!-- Startup & performance -->
+      <section id="startup" data-keywords="startup restore session sleep tabs memory performance">
+        <header><h2>Startup &amp; performance</h2><p>What opens when Coffee starts, and keeping it fast.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Continue where you left off</b><span>Reopen your tabs when Coffee starts</span></div>
+            <label class="switch"><input type="checkbox" id="restoreSession"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Put inactive tabs to sleep</b><span>Frees memory and CPU; sleeping tabs reload when you open them</span></div>
+            <select id="sleepMinutes">
+              <option value="0">Never</option>
+              <option value="5">After 5 minutes</option>
+              <option value="15">After 15 minutes</option>
+              <option value="30">After 30 minutes</option>
+              <option value="60">After 1 hour</option>
+              <option value="120">After 2 hours</option>
+            </select>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <h2>Downloads</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b>Save files to</b><span id="downloadDir"></span></div>
-          <button class="btn" id="changeDir">Change</button>
+      <!-- Downloads -->
+      <section id="downloads" data-keywords="downloads folder save location">
+        <header><h2>Downloads</h2><p>Where downloaded files go.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Save files to</b><span id="downloadDir"></span></div>
+            <button class="btn" id="changeDir">Change</button>
+          </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <section>
-      <h2>Updates</h2>
-      <div class="card">
-        <div class="row">
-          <div class="txt"><b id="upd-title">Coffee</b><span id="upd-status"></span></div>
-          <button class="btn" id="upd-btn">Check for updates</button>
+      <!-- Import -->
+      <section id="import" data-keywords="import chrome edge brave vivaldi bookmarks history switch transfer">
+        <header><h2>Import</h2><p>Bring bookmarks and history over from another browser. It stays untouched.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Import from</b><span id="importInfo">Bookmarks (with folders and icons) and history</span></div>
+            <select id="importFrom"></select>
+          </div>
+          <div class="row">
+            <div class="txt checks">
+              <label><input type="checkbox" id="importBookmarks" checked> Bookmarks</label>
+              <label><input type="checkbox" id="importHistory" checked> History</label>
+            </div>
+            <button class="btn primary" id="importRun">Import</button>
+          </div>
         </div>
-      </div>
-    </section>
+        <p class="note">Passwords and cookies can't be imported: Chrome locks them so only Chrome can read them.</p>
+      </section>
 
-    <footer id="about"></footer>
-  </main>
+      <!-- Extensions -->
+      <section id="extensions" data-keywords="extensions add-ons plugins chrome web store">
+        <header><h2>Extensions</h2><p>Off by default. Turn on to install extensions from the Chrome Web Store.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Allow extensions</b><span id="extInfo">Coffee loads nothing extra while this is off</span></div>
+            <label class="switch"><input type="checkbox" id="extensionsOn"><i></i></label>
+          </div>
+          <div class="row" id="extRestartRow" hidden>
+            <div class="txt"><b>Restart to apply</b><span>Your tabs come back after the restart</span></div>
+            <button class="btn primary" id="relaunch">Restart Coffee</button>
+          </div>
+          <div class="row" id="extStoreRow" hidden>
+            <div class="txt"><b>Get extensions</b><span>Use “Add to Chrome” on any extension. Manage them with the puzzle button in the toolbar</span></div>
+            <button class="btn" id="openStore">Chrome Web Store</button>
+          </div>
+        </div>
+        <p class="note">Most extensions work, but some features Chrome extensions use aren't available yet. Extensions don't run in private tabs.</p>
+      </section>
+
+      <!-- About -->
+      <section id="about" data-keywords="about version update setup guide help">
+        <header><h2>About</h2><p>Version, updates and setup.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b id="upd-title">Coffee</b><span id="upd-status"></span></div>
+            <button class="btn" id="upd-btn">Check for updates</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Setup guide</b><span>Pick your theme, tab layout and search engine step by step</span></div>
+            <button class="btn" id="runSetup">Run again</button>
+          </div>
+        </div>
+        <p class="note" id="aboutLine"></p>
+      </section>
+
+      <div class="empty" id="noResults" hidden>No settings match “<span></span>”</div>
+    </main>
+  </div>
   <div class="toast" id="toast"></div>
   <script src="settings.js"></script>
 </body>

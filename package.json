@@ -1,7 +1,7 @@
 {
   "name": "coffee",
   "productName": "Coffee",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A fast, minimal, good-looking browser.",
   "main": "src/main/main.js",
   "scripts": {
@@ -68,6 +68,8 @@
   },
   "dependencies": {
     "@ghostery/adblocker-electron": "^2.20.3",
+    "electron-chrome-extensions": "^4.10.0",
+    "electron-chrome-web-store": "^0.13.0",
     "electron-updater": "^6.8.11",
     "tldts-experimental": "^7.5.5"
   },

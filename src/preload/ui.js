@@ -22,6 +22,13 @@ ipcRenderer.on('ev:theme', (_e, t) => applyTheme(t));
 contextBridge.exposeInMainWorld('coffee', {
   send: (type, payload) => ipcRenderer.send('cmd', type, payload),
   invoke: (type, payload) => ipcRenderer.invoke('invoke', type, payload),
+  // Extension toolbar actions (only used when extensions are turned on).
+  ext: {
+    getState: () => ipcRenderer.invoke('crx-msg-remote', 'persist:web', 'browserAction.getState'),
+    activate: (details) => ipcRenderer.invoke('crx-msg-remote', 'persist:web', 'browserAction.activate', details),
+    observe: () => ipcRenderer.invoke('crx-msg-remote', 'persist:web', 'browserAction.addObserver'),
+    onUpdate: (cb) => { ipcRenderer.on('browserAction.update', () => cb()); },
+  },
   on: (event, cb) => {
     const listener = (_e, data) => cb(data);
     ipcRenderer.on(`ev:${event}`, listener);

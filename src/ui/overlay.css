@@ -53,6 +53,29 @@ body.t-sidebar #root { inset: 0 12px 0 0; }
 .bmf-back { color: var(--muted); }
 .bmf-all .label { color: var(--muted); }
 
+/* ---------- Extensions panel ---------- */
+.extp { display: flex; flex-direction: column; }
+.extp-head { padding: 10px 10px 8px; font: 600 13px/1 var(--font-display); }
+.extp-list { overflow-y: auto; max-height: 364px; scrollbar-width: thin; }
+.extp-item { display: flex; align-items: center; gap: 11px; height: 52px; padding: 0 6px 0 10px; border-radius: 8px; transition: background .15s, opacity .2s; }
+.extp-item:hover { background: var(--hover); }
+.extp-item.removing { opacity: .35; pointer-events: none; }
+.extp-ico { width: 24px; height: 24px; flex: none; border-radius: 5px; }
+.extp-letter { display: grid; place-items: center; background: var(--hover); color: var(--muted); font-weight: 600; }
+.extp-meta { flex: 1; min-width: 0; }
+.extp-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.extp-ver { color: var(--faint); font-size: 11px; margin-top: 2px; }
+.extp-acts { display: flex; gap: 2px; opacity: .6; transition: opacity .15s; }
+.extp-item:hover .extp-acts { opacity: 1; }
+.extp-empty { padding: 14px 10px; color: var(--muted); }
+.extp-store .check svg { width: 14px; height: 14px; }
+
+/* Extension install prompt */
+.extinstall h1 { gap: 10px; }
+.exti-ico { width: 28px; height: 28px; display: grid; place-items: center; color: var(--accent); }
+.exti-ico img, .exti-ico svg { width: 28px; height: 28px; }
+.exti-perms { margin: 8px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.6; }
+
 /* ---------- Menu ---------- */
 .menu { padding: 5px; }
 .mi {
