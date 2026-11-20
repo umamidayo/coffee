@@ -1,3 +1,20 @@
+; ---------------------------------------------------------------------------
+; The setup wizard's words. Its pictures are build/installerSidebar.bmp,
+; uninstallerSidebar.bmp and installerHeader.bmp (npm run installer-art).
+; ---------------------------------------------------------------------------
+!ifndef BUILD_UNINSTALLER
+  !macro customWelcomePage
+    !define MUI_WELCOMEPAGE_TITLE "Welcome to Coffee"
+    !define MUI_WELCOMEPAGE_TEXT "A fast, minimal browser with ad blocking built in.$\r$\n$\r$\nSetup will install Coffee on this computer. You can bring your bookmarks and history over from Chrome, Edge or Brave the first time you open it.$\r$\n$\r$\nClick Next to continue."
+    !insertmacro MUI_PAGE_WELCOME
+  !macroend
+
+  ; Used by the finish page electron-builder adds (with its "run" checkbox).
+  !define MUI_FINISHPAGE_TITLE "Coffee is ready"
+  !define MUI_FINISHPAGE_TEXT "Coffee is installed.$\r$\n$\r$\nTo open links from other apps in Coffee, make it your default browser in Coffee's Settings."
+  !define MUI_FINISHPAGE_RUN_TEXT "Open Coffee now"
+!endif
+
 ; Registers Coffee as a web browser so it shows up in
 ; Settings > Apps > Default apps. Per-user (HKCU), no admin rights needed.
 

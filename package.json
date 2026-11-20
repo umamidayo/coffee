@@ -1,13 +1,14 @@
 {
   "name": "coffee",
   "productName": "Coffee",
-  "version": "0.1.13",
+  "version": "0.1.14",
   "description": "A fast, minimal, good-looking browser.",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
     "scriptlets": "node scripts/build-scriptlets.js",
     "icon": "electron scripts/make-icon.js",
+    "installer-art": "electron scripts/make-installer-art.js",
     "predist": "node scripts/build-scriptlets.js",
     "dist": "electron-builder --win --publish never",
     "prerelease": "node scripts/build-scriptlets.js && node scripts/tag-release.js",
