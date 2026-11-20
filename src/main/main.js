@@ -121,6 +121,7 @@ function applyTheme() {
 // ---------------------------------------------------------------------------
 
 function windowState() {
+  if (!W.win || W.win.isDestroyed()) return { maximized: false, fullscreen: false, focused: false };
   return {
     maximized: W.win.isMaximized(),
     fullscreen: W.win.isFullScreen() && !htmlFullscreenTab,
@@ -245,12 +246,13 @@ function createWindow() {
   W.ui.loadFile(path.join(ROOT, 'ui', 'index.html'));
   if (s.maximized) W.win.maximize();
 
-  W.win.once('ready-to-show', () => { W.win.show(); updatePeekWatch(); });
+  // Bound to this window's own state (see `bind` below).
+  state.win.once('ready-to-show', () => inWindow(state, () => { if (state.win && !state.win.isDestroyed()) state.win.show(); updatePeekWatch(); }));
 
   W.overlay = new Overlay(W.win, UI_PRELOAD);
-  W.overlay.onState = (type) => emit('overlay', type);
-  W.overlay.wc.on('before-input-event', (e, input) => onInput(e, input, null));
-  W.ui.on('before-input-event', (e, input) => onInput(e, input, null));
+  W.overlay.onState = (type) => inWindow(state, () => emit('overlay', type));
+  W.overlay.wc.on('before-input-event', (e, input) => inWindow(state, () => onInput(e, input, null)));
+  W.ui.on('before-input-event', (e, input) => inWindow(state, () => onInput(e, input, null)));
   // The chrome and overlay carry the privileged preload: never let them load
   // anything else (e.g. a link or file dropped onto the title bar).
   lockDown(W.ui);
@@ -287,7 +289,8 @@ function createWindow() {
     const i = winStates.indexOf(state);
     if (i >= 0) winStates.splice(i, 1);
     // If the closed window was the current one, hand "current" to a window still open.
-    if (W === state) W = winStates[winStates.length - 1] || state;
+    // With none left, `W` keeps pointing at the (closed) state; nothing reads it then.
+    if (W === state && winStates.length) W = winStates[winStates.length - 1];
   }));
 
   const hooks = {
