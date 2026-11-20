@@ -311,3 +311,35 @@ body.no-bookmarks #bookmarks-bar { display: none; }
   background: var(--surface);
 }
 body.html-fullscreen #page-slot { inset: 0; border-radius: 0; }
+
+/* ---------- Split view (geometry comes from main: SPLIT_GAP 8, SPLIT_BAR 3) ---------- */
+#split[hidden] { display: none; }
+.split-bar {
+  position: fixed; height: 3px; background: var(--line);
+  transition: background .2s;
+}
+.split-bar.on { background: var(--accent); }
+#split-divider {
+  position: fixed; bottom: 0; display: grid; place-items: center;
+  cursor: col-resize; background: var(--bg);
+}
+#split-divider span {
+  width: 3px; height: 36px; border-radius: 2px; background: var(--line);
+  transition: background .15s, height .2s var(--spring);
+}
+#split-divider:hover span, #split-divider.dragging span { background: var(--accent); height: 56px; }
+
+/* A tab from another window is being dragged over this one: the whole frame
+   lights up (the page itself is lit by the drop highlight above it). */
+body::after {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 50;
+  box-shadow: inset 0 0 0 2px var(--accent), inset 0 0 0 7px var(--accent-soft);
+  opacity: 0; transition: opacity .15s;
+}
+body.drop-target::after { opacity: 1; }
+body.drop-target #topbar, body.drop-target #sidebar, body.drop-target #tabstrip {
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+
+/* Pop-out video button: accented while a video is popped out. */
+#omni-pip.on { color: var(--accent); }

@@ -27,6 +27,7 @@
      *   titles       show titles next to icons
      *   activateOn   'pointerdown' (instant) | 'click' (lets you drag first)
      *   onHover(node), onLeave()   optional tooltip hooks
+     *   canTear      tabs dragged away from the strip go to another window (or a new one)
      */
     constructor(root, opts) {
       this.root = root;
@@ -35,8 +36,10 @@
       this.activateOn = opts.activateOn || 'pointerdown';
       this.onHover = opts.onHover || (() => {});
       this.onLeave = opts.onLeave || (() => {});
+      this.canTear = !!opts.canTear;
       this.nodes = new Map();
       this.tabs = [];
+      this.snap = { tabs: [], activeId: null };
       this.activeId = null;
       this.drag = null;
       this.pendingRender = false;
@@ -47,13 +50,76 @@
       root.prepend(this.highlight);
       this.onMove = (e) => this.dragMove(e);
       this.onUp = () => this.dragEnd();
+      // The system took the pointer away mid-drag: put the tab back.
+      this.onCancel = () => {
+        const d = this.drag;
+        if (d && d.active && this.canTear) this.api.send('tab:drag', { id: d.id, phase: 'cancel' });
+        this.abortDrag();
+      };
       window.addEventListener('pointermove', this.onMove);
       window.addEventListener('pointerup', this.onUp);
+      window.addEventListener('pointercancel', this.onCancel);
+      // Main runs a drag once the tab leaves the strip (see main.js).
+      this.offs = [
+        this.api.on('drag:tear', (m) => this.tear(m.id, m.out)),
+        // Main finished the drop (it may see the release before we do, or instead of us).
+        this.api.on('drag:done', (m) => { if (this.drag && this.drag.id === m.id) this.abortDrag(); }),
+        this.api.on('drag:abort', () => this.abortDrag()),
+      ];
     }
 
     destroy() {
       window.removeEventListener('pointermove', this.onMove);
       window.removeEventListener('pointerup', this.onUp);
+      window.removeEventListener('pointercancel', this.onCancel);
+      for (const off of this.offs) off();
+    }
+
+    // ---- a tab dragged here from another window -----------------------------
+    /** Show a placeholder for it (it lands where the placeholder is). */
+    showIncoming(t) {
+      this.hideIncoming(true);
+      const n = document.createElement('div');
+      n.className = 'tab incoming';
+      n.innerHTML = `<div class="tab-ico"><div class="tab-icon">${iconMarkup({ favicon: t.favicon, title: t.title, url: '' })}</div></div><span class="tab-title"></span>`;
+      n.querySelector('.tab-title').textContent = t.title || 'New Tab';
+      const img = n.querySelector('img');
+      if (img) img.onerror = () => { img.outerHTML = `<span class="glyph">${Icons.globe}</span>`; };
+      this.incomingNode = n;
+      this.incomingIndex = null;
+      return n;
+    }
+
+    hideIncoming(instant) {
+      const n = this.incomingNode;
+      if (!n) return;
+      this.incomingNode = null;
+      if (instant || !n.isConnected) { n.remove(); return; }
+      this.flip(() => n.remove());
+      this.moveHighlight();
+    }
+
+    /** The pointer is at (x, y) on this page: move the placeholder there; returns the tab index it stands for. */
+    incomingAt(x, y) {
+      const n = this.incomingNode;
+      if (!n) return null;
+      const others = this.live().filter((o) => o !== n);
+      // Over (or near) the strip: between the tabs under the pointer. Elsewhere on the window: at the end.
+      const area = (this.root.closest('#tabs-scroll, #htabs-scroll, .peek-scroll') || this.root).getBoundingClientRect();
+      let to = others.length;
+      if (x >= area.left - 40 && x <= area.right + 40 && y >= area.top - 40 && y <= area.bottom + 40) {
+        const c = (this.vertical ? y : x) - this.start(this.root);
+        to = others.filter((o) => this.pos(o) + this.size(o) / 2 < c).length;
+      }
+      if (to !== this.incomingIndex || !n.isConnected) {
+        this.incomingIndex = to;
+        this.flip(() => {
+          if (to < others.length) others[to].before(n);
+          else (others[others.length - 1] || this.highlight).after(n);
+        });
+        this.moveHighlight();
+      }
+      return to;
     }
 
     // ---- axis helpers -------------------------------------------------------
@@ -89,6 +155,8 @@
         if (img) img.onerror = () => { n._icon.innerHTML = `<span class="letter">${letterFor(t)}</span>`; };
       }
       n.classList.toggle('active', t.id === this.activeId);
+      // The other half of a split view (on screen or not) gets an outline.
+      n.classList.toggle('paired', !!this.pair && this.pair.includes(t.id) && t.id !== this.activeId);
       n.classList.toggle('pane', t.id === this.paneId);
       n.classList.toggle('loading', t.loading && !t.newtab);
       n.classList.toggle('sleeping', t.sleeping && t.id !== this.activeId);
@@ -119,9 +187,11 @@
     }
 
     render(snap) {
+      this.snap = snap;
       this.tabs = snap.tabs;
       this.activeId = snap.activeId;
       this.paneId = snap.paneId || null;
+      this.pair = snap.pair || null;
       if (this.drag && this.drag.active) { this.pendingRender = true; return; }
       const ids = new Set(this.tabs.map((t) => t.id));
       this.flip(() => {
@@ -194,7 +264,7 @@
       n.addEventListener('pointerdown', (e) => {
         if (e.target.closest('.tab-close') || e.button !== 0) return;
         if (this.activateOn === 'pointerdown') this.activate(id());
-        this.drag = { node: n, id: id(), startPos: this.client(e), grab: this.client(e) - this.start(n), active: false, pointer: e.pointerId };
+        this.drag = { node: n, id: id(), x0: e.clientX, y0: e.clientY, grab: this.client(e) - this.start(n), active: false, pointer: e.pointerId };
       });
       if (this.activateOn === 'click') {
         n.addEventListener('click', (e) => {
@@ -218,19 +288,26 @@
     dragMove(e) {
       const d = this.drag;
       if (!d) return;
-      d.lastX = e.clientX;
-      d.lastY = e.clientY;
-      d.screenX = e.screenX;
-      d.screenY = e.screenY;
       if (!d.active) {
-        if (Math.abs(this.client(e) - d.startPos) < 5) return;
+        // Either direction starts a drag: along the strip to reorder, across it to tear off.
+        if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 5) return;
         d.active = true;
         d.node._dragged = true;
         this.onLeave();
         d.node.classList.add('dragging');
         this.root.classList.add('drag-active');
         try { d.node.setPointerCapture(d.pointer); } catch { /* ignore */ }
+        // Main follows the pointer from here (it may leave this page): once it's
+        // away from the strip, main shows a card of the tab that follows it and
+        // what would happen on release, and tells us (drag:tear) to leave a
+        // placeholder here.
+        if (this.canTear) {
+          const area = this.root.closest('#tabs-scroll, #htabs-scroll, .peek-scroll') || this.root;
+          const r = area.getBoundingClientRect();
+          this.api.send('tab:drag', { id: d.id, phase: 'begin', strip: { x: r.left, y: r.top, width: r.width, height: r.height } });
+        }
       }
+      if (d.out) return; // the card is what moves now
       const base = this.start(this.root);
       const live = this.live();
       const from = live.indexOf(d.node);
@@ -248,6 +325,16 @@
       this.moveHighlight();
     }
 
+    /** Main says the dragged tab left the strip (or came back). */
+    tear(id, out) {
+      const d = this.drag;
+      if (!d || !d.active || d.id !== id) return;
+      d.out = out;
+      d.node.classList.toggle('tearing', out);
+      if (out) d.node.style.transform = '';
+      this.moveHighlight();
+    }
+
     dragEnd() {
       const d = this.drag;
       this.drag = null;
@@ -255,25 +342,37 @@
       const index = this.live().indexOf(d.node);
       d.node.style.transition = 'transform .28s var(--spring)';
       d.node.style.transform = '';
-      d.node.classList.remove('dragging');
+      d.node.classList.remove('dragging', 'tearing');
       this.root.classList.remove('drag-active');
       setTimeout(() => { d.node.style.transition = ''; }, 300);
-      // Dropped outside this strip: hand the tab to main (another window, or a new one).
-      const r = this.root.getBoundingClientRect();
-      const inside = d.lastX >= r.left && d.lastX <= r.right && d.lastY >= r.top && d.lastY <= r.bottom;
-      if (!inside && d.screenX !== undefined) {
-        this.api.send('tab:drop', { id: d.id, x: d.screenX, y: d.screenY });
-        if (this.pendingRender) { this.pendingRender = false; this.render({ tabs: this.tabs, activeId: this.activeId }); }
-        this.moveHighlight();
+      this.pendingRender = false;
+      // Released: main decides (it knows where the pointer is). Away from the
+      // strip it does what it showed (split, another window, a new window).
+      if (this.canTear) this.api.send('tab:drag', { id: d.id, phase: 'end' });
+      if (d.out) {
+        this.render(this.snap);
         return;
       }
       // Reflect locally right away; main confirms with a fresh snapshot.
       const t = this.tabs.find((x) => x.id === d.id);
-      this.tabs = this.tabs.filter((x) => x.id !== d.id);
-      this.tabs.splice(index, 0, t);
+      const tabs = this.tabs.filter((x) => x.id !== d.id);
+      tabs.splice(index, 0, t);
       this.api.send('tab:move', { id: d.id, index });
-      if (this.pendingRender) { this.pendingRender = false; this.render({ tabs: this.tabs, activeId: this.activeId }); }
-      this.moveHighlight();
+      this.render({ ...this.snap, tabs });
+    }
+
+    /** Stop a drag without dropping (Esc, or the pointer was taken away). */
+    abortDrag() {
+      const d = this.drag;
+      this.drag = null;
+      if (!d || !d.active) return;
+      d.node.style.transition = 'transform .28s var(--spring)';
+      d.node.style.transform = '';
+      d.node.classList.remove('dragging', 'tearing');
+      this.root.classList.remove('drag-active');
+      setTimeout(() => { d.node.style.transition = ''; }, 300);
+      this.pendingRender = false;
+      this.render(this.snap);
     }
 
     get dragging() { return !!(this.drag && this.drag.active); }

@@ -25,6 +25,7 @@
         <input id="omni-input" type="text" spellcheck="false" autocomplete="off" placeholder="Search or enter address">
       </div>
       <button id="omni-zoom" class="omni-pill" hidden></button>
+      <button id="omni-pip" class="omni-icon" aria-label="Pop out video" title="Pop out video (Alt+P)" hidden></button>
       <button id="omni-star" class="omni-icon" aria-label="Bookmark this page"></button>
 
       <div id="find" hidden>
@@ -78,6 +79,15 @@
 
   <div id="loading-bar"><div class="fill"></div></div>
   <main id="page-slot"></main>
+
+  <!-- Split view: the pages sit above this document, so these show only in
+       the gaps the main process leaves: a bar over each half (accented over
+       the active one) and a divider to drag between them. -->
+  <div id="split" hidden>
+    <div id="split-bar-left" class="split-bar"></div>
+    <div id="split-bar-right" class="split-bar"></div>
+    <div id="split-divider" title="Drag to resize · double-click to reset"><span></span></div>
+  </div>
 
   <script src="icons.js"></script>
   <script src="tabstrip.js"></script>

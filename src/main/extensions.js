@@ -20,8 +20,11 @@ let ses = null;
  * @param {object} o
  *   ses        the normal browsing session
  *   uiSession  session of the browser chrome (for crx:// icons)
- *   win()      the browser window
- *   tabs       TabManager
+ *   win()      the current (focused) browser window
+ *   tabs()     the current window's TabManager
+ *   windows()  every open window: [{ win, tabs }]
+ *   findTab(wc) the tab showing a webContents, in any window
+ *   newWindow(url) open a window (null when multi-window is off)
  *   confirmInstall(details) -> Promise<boolean>
  */
 async function init(o) {
@@ -33,22 +36,24 @@ async function init(o) {
   api = new ElectronChromeExtensions({
     session: ses,
     createTab(details) {
-      const tab = o.tabs.create({ url: details.url || undefined, background: details.active === false });
+      const tab = o.tabs().create({ url: details.url || undefined, background: details.active === false });
       tab.ensureView();
-      return [tab.wc, o.win()];
+      return [tab.wc, tab.mgr.win];
     },
     selectTab(wc) {
-      const tab = o.tabs.byWebContents(wc);
-      if (tab) o.tabs.activate(tab.id);
+      const tab = o.findTab(wc);
+      if (tab) tab.mgr.activate(tab.id);
     },
     removeTab(wc) {
-      const tab = o.tabs.byWebContents(wc);
-      if (tab) o.tabs.close(tab.id);
+      const tab = o.findTab(wc);
+      if (tab) tab.mgr.close(tab.id);
     },
-    // Coffee has one window: "new window" requests open a tab instead.
+    // "New window" requests open a window when multi-window is on, a tab otherwise.
     createWindow(details) {
       const url = Array.isArray(details.url) ? details.url[0] : details.url;
-      if (url) o.tabs.create({ url });
+      const state = o.newWindow(url);
+      if (state) return state.win;
+      if (url) o.tabs().create({ url });
       return o.win();
     },
   });
@@ -65,8 +70,11 @@ async function init(o) {
   });
 
   // Register tabs that already exist.
-  for (const t of o.tabs.tabs) if (t.wc && !t.private) api.addTab(t.wc, o.win());
-  if (o.tabs.active && o.tabs.active.wc && !o.tabs.active.private) api.selectTab(o.tabs.active.wc);
+  for (const w of o.windows()) {
+    for (const t of w.tabs.tabs) if (t.wc && !t.private) api.addTab(t.wc, w.win);
+  }
+  const cur = o.tabs().active;
+  if (cur && cur.wc && !cur.private) api.selectTab(cur.wc);
   return api;
 }
 

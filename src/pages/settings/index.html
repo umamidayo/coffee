@@ -28,7 +28,6 @@
         <a href="#downloads" data-i="download">Downloads</a>
         <a href="#import" data-i="import">Import</a>
         <a href="#extensions" data-i="puzzle">Extensions</a>
-        <a href="#experimental" data-i="bolt">Experimental</a>
         <a href="#about" data-i="info">About</a>
       </div>
     </nav>
@@ -64,7 +63,7 @@
       </section>
 
       <!-- Tabs -->
-      <section id="tabs" data-keywords="tabs sidebar vertical horizontal top side compact titles icons">
+      <section id="tabs" data-keywords="tabs sidebar vertical horizontal top side compact titles icons windows multiple window new window split view side by side drag">
         <header><h2>Tabs</h2><p>Where your tabs live and how they look.</p></header>
         <div class="card">
           <div class="row">
@@ -81,6 +80,16 @@
           <div class="row" id="titlesRow">
             <div class="txt"><b>Show tab titles</b><span>On the side bar, top tabs and the compact sidebar. Off shows icons only</span></div>
             <label class="switch"><input type="checkbox" id="tabTitles"><i></i></label>
+          </div>
+        </div>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Multiple windows</b><span>Open more windows with Ctrl+N, and drag a tab out of the tab strip into a new window or onto another one</span></div>
+            <label class="switch"><input type="checkbox" id="multiWindow"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Split view</b><span>See two tabs side by side: drag a tab onto the left or right half of the page, or right-click a tab and choose Open beside current tab</span></div>
+            <label class="switch"><input type="checkbox" id="splitView"><i></i></label>
           </div>
         </div>
       </section>
@@ -260,18 +269,6 @@
           </div>
         </div>
         <p class="note">Most extensions work, but some features Chrome extensions use aren't available yet. Extensions don't run in private tabs.</p>
-      </section>
-
-      <!-- Experimental -->
-      <section id="experimental" data-keywords="experimental beta multi window multi-view split view tabs">
-        <header><h2>Experimental</h2><p>Features still in development. Off by default.</p></header>
-        <div class="card">
-          <div class="row">
-            <div class="txt"><b>Enable experimental features</b><span>Multiple windows, and viewing two tabs side by side. May be unstable</span></div>
-            <label class="switch"><input type="checkbox" id="experimental"><i></i></label>
-          </div>
-        </div>
-        <p class="note">Turn this off if you run into problems. Your tabs and data aren't affected.</p>
       </section>
 
       <!-- About -->

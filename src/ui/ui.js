@@ -14,6 +14,9 @@
   const state = {
     tabs: [],
     activeId: null,
+    popout: false, // a video popped out from a page no tab shows is playing
+    paneId: null, // split view: the tab shown beside the active one
+    pair: null,   // split view: [left id, right id]
     bookmarks: [],
     settings: {},
     overlay: null,
@@ -30,6 +33,7 @@
   $('home').innerHTML = Icons.home;
   $('bookmarks-btn').innerHTML = Icons.bookmarks;
   $('omni-star').innerHTML = Icons.star;
+  $('omni-pip').innerHTML = Icons.pip;
   $('omni-private').innerHTML = `${Icons.mask}<span>Private</span>`;
   $('omni-private').title = "Private tab: history isn't saved, and cookies are deleted when you close all private tabs";
   $('downloads-btn').insertAdjacentHTML('afterbegin', Icons.download);
@@ -94,7 +98,7 @@
 
   function renderTabs() {
     // Only the visible strip is kept up to date.
-    strip().render({ tabs: state.tabs, activeId: state.activeId });
+    strip().render({ tabs: state.tabs, activeId: state.activeId, paneId: state.paneId, pair: state.pair });
   }
 
   function applyLayout(s) {
@@ -241,6 +245,15 @@
     zoomPill.hidden = !(t && t.zoom);
     if (t && t.zoom) zoomPill.textContent = `${t.zoom}%`;
 
+    // Pop-out video: offered while the page plays media, and kept (lit) while
+    // a video popped out from a page you've left is still playing.
+    const pip = $('omni-pip');
+    const media = !!(t && t.media);
+    const closes = !!(t && t.pip) || (state.popout && !media);
+    pip.hidden = !media && !state.popout;
+    pip.classList.toggle('on', !!(t && t.pip) || state.popout);
+    pip.title = closes ? 'Close pop-out video (Alt+P)' : 'Pop out video (Alt+P)';
+
     // Nav buttons
     $('back').disabled = !(t && t.canGoBack);
     $('forward').disabled = !(t && t.canGoForward);
@@ -355,6 +368,88 @@
   };
   star.dataset.toggle = 'bookmark';
   zoomPill.onclick = () => api.send('zoom:reset');
+  $('omni-pip').onclick = () => api.send('pip:toggle');
+  api.on('popout', (on) => { state.popout = !!on; renderOmni(); });
+
+  // A tab dragged here from another window: the frame lights up, and a
+  // placeholder in the tab strip follows the pointer to where it would land.
+  let incomingIdx = null;
+  api.on('drag:incoming', (t) => {
+    document.body.classList.toggle('drop-target', !!t);
+    incomingIdx = null;
+    if (t) strip().showIncoming(t);
+    else strip().hideIncoming();
+  });
+  api.on('drag:over', (p) => {
+    const i = strip().incomingAt(p.x, p.y);
+    if (i !== null && i !== incomingIdx) { incomingIdx = i; api.send('tab:drop-index', { index: i }); }
+  });
+
+  // Back / Forward: right-click lists the pages to go back or forward to.
+  for (const [id, dir] of [['back', -1], ['forward', 1]]) {
+    $(id).addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const r = $(id).getBoundingClientRect();
+      api.send('nav:history-menu', { dir, x: r.left, y: r.bottom + 4 });
+    });
+  }
+
+  // ---------- split view: active-half bars and the divider ----------
+  const split = $('split');
+  const divider = $('split-divider');
+  let splitGeo = null;
+  const place = (node, x, width, top, height) => {
+    node.style.left = `${x}px`;
+    node.style.width = `${width}px`;
+    node.style.top = `${top}px`;
+    if (height !== undefined) node.style.height = `${height}px`;
+  };
+  api.on('split', (g) => {
+    splitGeo = g;
+    split.hidden = !g;
+    if (!g) return;
+    place($('split-bar-left'), g.left.x, g.left.width, g.top);
+    place($('split-bar-right'), g.right.x, g.right.width, g.top);
+    $('split-bar-left').classList.toggle('on', g.active === 'left');
+    $('split-bar-right').classList.toggle('on', g.active === 'right');
+    place(divider, g.gap.x, g.gap.width, g.top);
+  });
+  // Dragging the divider resizes the halves. The pages sit above this
+  // document, so main also lays a transparent overlay over them that keeps
+  // reporting the pointer; whichever of the two sees it sends the ratio.
+  let splitRaf = 0;
+  const ratioAt = (clientX) => {
+    const g = splitGeo;
+    const half = g.gap.width / 2;
+    return (clientX - g.page.x - half) / Math.max(1, g.page.width - g.gap.width);
+  };
+  let lastPress = 0;
+  divider.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || !splitGeo) return;
+    e.preventDefault();
+    // A double press puts the divider back in the middle. (Not 'dblclick':
+    // the drag overlay covers the divider between the two clicks.)
+    const now = Date.now();
+    if (now - lastPress < 380) { lastPress = 0; api.send('split:resize', { ratio: 0.5, done: true }); return; }
+    lastPress = now;
+    divider.setPointerCapture(e.pointerId);
+    divider.classList.add('dragging');
+    api.send('split:drag');
+  });
+  divider.addEventListener('pointermove', (e) => {
+    if (!divider.classList.contains('dragging') || !splitGeo) return;
+    const ratio = ratioAt(e.clientX);
+    cancelAnimationFrame(splitRaf);
+    splitRaf = requestAnimationFrame(() => api.send('split:resize', { ratio }));
+  });
+  const endDrag = (e) => {
+    if (!divider.classList.contains('dragging')) return;
+    divider.classList.remove('dragging');
+    cancelAnimationFrame(splitRaf);
+    api.send('split:resize', { ratio: splitGeo ? ratioAt(e.clientX) : 0.5, done: true });
+  };
+  divider.addEventListener('pointerup', endDrag);
+  divider.addEventListener('lostpointercapture', () => divider.classList.remove('dragging'));
 
   // ---------- find in page ----------
   const find = $('find');
@@ -624,6 +719,8 @@
   // =====================================================================
   function applySettings(s) {
     state.settings = s;
+    // Tabs can be dragged out of the strip (split view, other windows) when those are on.
+    sideStrip.canTear = topStrip.canTear = !!s.canTear;
     document.body.classList.toggle('no-bookmarks', !s.bookmarksBarShown);
     applyLayout(s);
     $('home').hidden = !s.showHome;
@@ -641,6 +738,8 @@
   api.on('tabs', (snap) => {
     state.tabs = snap.tabs;
     state.activeId = snap.activeId;
+    state.paneId = snap.paneId || null;
+    state.pair = snap.pair || null;
     if (snap.activeId !== lastActiveId) {
       lastActiveId = snap.activeId;
       editing = false;
@@ -666,12 +765,15 @@
 
   api.invoke('init').then((d) => {
     state.bookmarks = d.bookmarks;
+    state.popout = !!d.popout;
     applySettings(d.settings);
     applyWindow(d.window);
     applyDownloads(d.downloads);
     renderBookmarks();
     state.tabs = d.snapshot.tabs;
     state.activeId = d.snapshot.activeId;
+    state.paneId = d.snapshot.paneId || null;
+    state.pair = d.snapshot.pair || null;
     lastActiveId = state.activeId;
     renderTabs();
     renderOmni();

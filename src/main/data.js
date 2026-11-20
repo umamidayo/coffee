@@ -27,7 +27,8 @@ const settings = new Store('settings', {
   hiddenShortcuts: [],     // hosts removed from the new tab page
   onboarded: false,        // finished (or skipped) the welcome setup
   extensions: false,       // opt-in Chrome extension support (takes effect on restart)
-  experimental: false,     // opt-in experimental features (multi-window, multi-view); off until stable
+  multiWindow: true,       // more than one window (Ctrl+N, dragging tabs between windows); can be turned off
+  splitView: false,        // opt-in: two tabs side by side in one window
   sleepMinutes: 30,
   restoreSession: true,
   theme: { preset: 'coffee', custom: null, saved: [] },
@@ -40,6 +41,16 @@ const settings = new Store('settings', {
 
 // People who used Coffee before the welcome setup existed shouldn't see it.
 if (settings.existed && !settings.loadedKeys.has('onboarded')) settings.data.onboarded = true;
+// The old "experimental features" switch covered both multiple windows and
+// split view; whoever had it on keeps both.
+if ('experimental' in settings.data) {
+  if (settings.data.experimental) {
+    if (!settings.loadedKeys.has('multiWindow')) settings.data.multiWindow = true;
+    if (!settings.loadedKeys.has('splitView')) settings.data.splitView = true;
+  }
+  delete settings.data.experimental;
+  settings.save();
+}
 const bookmarks = new Store('bookmarks', []);
 const session = new Store('session', { tabs: [], active: 0 }, 1500);
 const historyStore = new Store('history', [], 2500);

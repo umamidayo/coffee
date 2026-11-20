@@ -15,6 +15,10 @@ html, body { background: transparent !important; height: 100%; overflow: hidden;
 
 button { background: none; border: 0; padding: 0; font: inherit; color: inherit; outline: none; }
 
+/* ---------- Split view divider drag: an invisible sheet over both tabs ---------- */
+body.t-splitdrag #root { inset: 0; }
+.splitdrag { position: absolute; inset: 0; cursor: col-resize; }
+
 /* ---------- Compact sidebar peek ---------- */
 /* Flush with the window's left edge; the shadow only falls to the right. */
 body.t-sidebar #root { inset: 0 12px 0 0; }
@@ -82,7 +86,23 @@ body.t-sidebar #root { inset: 0 12px 0 0; }
   display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 10px 0 8px;
   border-radius: 7px; white-space: nowrap; cursor: default;
 }
-.mi .check { width: 14px; height: 14px; flex: none; color: var(--accent); }
+.mi .check { width: 15px; height: 15px; flex: none; color: var(--muted); display: grid; place-items: center; }
+.mi .check svg { width: 15px; height: 15px; }
+.mi.checked .check { color: var(--accent); }
+.mi.disabled .check { opacity: .5; }
+
+/* Zoom row: − 100% + | full screen */
+.mi.mzoom { height: 36px; gap: 6px; padding-right: 4px; }
+.mzoom .label { flex: 1; }
+.mzoom button {
+  height: 28px; min-width: 28px; border-radius: 7px; display: grid; place-items: center;
+  color: var(--text); font-size: 12px;
+}
+.mzoom button svg { width: 15px; height: 15px; }
+.mzoom button:hover { background: var(--hover); }
+.mzoom button:active { background: var(--press); }
+.mzoom .zv { min-width: 48px; font-variant-numeric: tabular-nums; }
+.mzoom .zsep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; }
 .mi .label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .mi .accel { color: var(--faint); font-size: 11.5px; }
 .mi.sel:not(.disabled) { background: var(--hover); }

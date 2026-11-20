@@ -59,14 +59,29 @@ const PEEK_W = 248;     // compact sidebar panel
 const RADIUS = 0;       // page runs to the window edges: no frame
 const M = 12; // shadow margin around overlay panels (matches overlay.css)
 
-// Window state. `W` holds this window's BrowserWindow, chrome page, overlay and tab manager.
-let W = { win: null, ui: null, overlay: null, tabs: null };
+/**
+ * One window's state: its BrowserWindow, chrome page, overlay and tab manager,
+ * plus things that belong to that window alone (the tab in HTML fullscreen,
+ * the compact-sidebar edge watcher, where popups were last anchored).
+ */
+function newWindowState() {
+  return {
+    win: null, ui: null, overlay: null, tabs: null,
+    fullscreenTab: null,
+    peekTimer: null, peekArmed: true, lastFocus: Date.now(),
+    omniRect: null, starRect: null, downloadsRect: null, extRect: null,
+    folderAnchor: null, folderFromButton: false,
+  };
+}
+
+// `W` is the window the current handler acts on.
+let W = newWindowState();
 let webSession = null;
 let theme = themes.resolve(data.settings.data.theme);
-let htmlFullscreenTab = null;
 let sessionTimer = null;
+let quitting = false; // the app is shutting down: the session was already saved with every window
 
-// Every open window's state. `W` (above) is the one the current handler acts on.
+// Every open window's state.
 const winStates = [];
 
 /** Run `fn` with `W` set to `state` (a window's own state), then restore the previous window. */
@@ -74,6 +89,29 @@ function inWindow(state, fn) {
   const prev = W;
   W = state;
   try { return fn(); } finally { W = prev; }
+}
+
+/** Run `fn` once for each open window, with `W` set to it. */
+function eachWindow(fn) {
+  for (const s of [...winStates]) {
+    if (s.win && !s.win.isDestroyed() && s.tabs) inWindow(s, () => fn(s));
+  }
+}
+
+/** The window and tab that own a page's webContents, in any window. */
+function findTab(wc) {
+  if (!wc) return null;
+  for (const s of winStates) {
+    const tab = s.tabs && s.tabs.byWebContents(wc);
+    if (tab) return { state: s, tab };
+  }
+  return null;
+}
+
+/** Save the session soon (it walks every tab's history, so saves are batched). */
+function scheduleSessionSave() {
+  clearTimeout(sessionTimer);
+  sessionTimer = setTimeout(() => { if (!quitting) saveAllSessions(); }, 2000);
 }
 
 const emit = (ev, payload) => {
@@ -105,15 +143,15 @@ function focusUrlbar() {
 function applyTheme() {
   theme = themes.resolve(data.settings.data.theme);
   nativeTheme.themeSource = theme.mode;
-  if (W.win) W.win.setBackgroundColor(theme.vars['--bg']);
-  const targets = [W.ui, W.overlay && W.overlay.wc];
-  if (W.tabs) {
+  eachWindow(() => {
+    W.win.setBackgroundColor(theme.vars['--bg']);
+    const targets = [W.ui, W.overlay && W.overlay.wc];
     for (const t of W.tabs.tabs) {
       if (t.wc && isInternal(t.url)) targets.push(t.wc);
       t.applyBackground();
     }
-  }
-  for (const wc of targets) if (wc && !wc.isDestroyed()) wc.send('ev:theme', theme);
+    for (const wc of targets) if (wc && !wc.isDestroyed()) wc.send('ev:theme', theme);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -124,7 +162,7 @@ function windowState() {
   if (!W.win || W.win.isDestroyed()) return { maximized: false, fullscreen: false, focused: false };
   return {
     maximized: W.win.isMaximized(),
-    fullscreen: W.win.isFullScreen() && !htmlFullscreenTab,
+    fullscreen: W.win.isFullScreen() && !W.fullscreenTab,
     focused: W.win.isFocused(),
   };
 }
@@ -134,6 +172,11 @@ function bookmarksBarShown() {
 }
 
 const tabsOnTop = () => data.settings.data.tabLayout === 'horizontal';
+// Opt-in features (Settings → Tabs).
+const multiWindow = () => !!data.settings.data.multiWindow;
+const splitOn = () => !!data.settings.data.splitView;
+/** Tabs can be dragged out of the strip (to split view, or to other windows). */
+const canTear = () => multiWindow() || splitOn();
 const compactSidebar = () => !tabsOnTop() && !!data.settings.data.compactSidebar;
 const sidebarWidth = () => (data.settings.data.tabTitles !== false ? SIDEBAR_TITLES_W : SIDEBAR_W);
 
@@ -144,7 +187,7 @@ function chromeTop() {
 
 function pageBounds() {
   const [w, h] = W.win.getContentSize();
-  if (htmlFullscreenTab) return { bounds: { x: 0, y: 0, width: w, height: h }, radius: 0 };
+  if (W.fullscreenTab) return { bounds: { x: 0, y: 0, width: w, height: h }, radius: 0 };
   const top = chromeTop() + (tabsOnTop() ? TABSTRIP_H : 0);
   const left = tabsOnTop() || compactSidebar() ? 0 : sidebarWidth();
   return {
@@ -161,13 +204,12 @@ function pageBounds() {
 // mouse events.
 // ---------------------------------------------------------------------------
 
-let peekTimer = null;
-let peekArmed = true;
 
 function updatePeekWatch() {
-  const want = !!W.win && compactSidebar() && W.win.isFocused() && !htmlFullscreenTab;
-  if (want && !peekTimer) peekTimer = setInterval(peekTick, 40);
-  else if (!want && peekTimer) { clearInterval(peekTimer); peekTimer = null; }
+  const want = !!W.win && compactSidebar() && W.win.isFocused() && !W.fullscreenTab;
+  const state = W;
+  if (want && !W.peekTimer) W.peekTimer = setInterval(() => inWindow(state, peekTick), 40);
+  else if (!want && W.peekTimer) { clearInterval(W.peekTimer); W.peekTimer = null; }
   if (!want && W.overlay && W.overlay.isOpen('sidebar')) W.overlay.close();
 }
 
@@ -180,11 +222,11 @@ function peekTick() {
   const top = chromeTop();
   // Edge hit: the first couple of pixels (or the resize border just outside).
   const atEdge = x <= 2 && x >= -10 && y >= top && y <= b.height;
-  if (atEdge && peekArmed) {
-    peekArmed = false;
+  if (atEdge && W.peekArmed) {
+    W.peekArmed = false;
     if (!W.overlay.isOpen() || W.overlay.type === 'tooltip') showPeek();
   } else if (x > 16) {
-    peekArmed = true; // re-arm once the cursor has moved away from the edge
+    W.peekArmed = true; // re-arm once the cursor has moved away from the edge
   }
 }
 
@@ -194,30 +236,58 @@ function showPeek() {
   const [, h] = W.win.getContentSize();
   const top = chromeTop();
   const width = peekTitles() ? PEEK_W : SIDEBAR_W + 8;
-  W.overlay.open('sidebar', { x: 0, y: top, width: width + M, height: h - top }, { ...W.tabs.snapshot(), titles: peekTitles() });
+  W.overlay.open('sidebar', { x: 0, y: top, width: width + M, height: h - top }, { ...W.tabs.snapshot(), titles: peekTitles(), canTear: canTear() });
 }
 
 function toggleTabLayout() { setSetting('tabLayout', tabsOnTop() ? 'vertical' : 'horizontal'); }
 function toggleCompact() { setSetting('compactSidebar', !data.settings.data.compactSidebar); }
 
-const SPLIT_GAP = 6;
+// Split view metrics (mirrored in src/ui/ui.css): the gap between the two
+// tabs holds a draggable divider; a thin bar above each tab marks the active one.
+const SPLIT_GAP = 8;
+const SPLIT_BAR = 3;
 
 function layout() {
-  const tab = W.tabs && W.tabs.active;
-  if (!tab || !tab.view) return;
+  if (!W.tabs || !W.win || W.win.isDestroyed()) return;
+  const t = W.tabs;
+  const views = t.visibleIds().map((id) => t.get(id)).filter((x) => x && x.view);
+  if (!views.length) return;
   const { bounds, radius } = pageBounds();
-  const pane = W.tabs.pane && W.tabs.get(W.tabs.pane);
-  if (pane && pane.view && !htmlFullscreenTab) {
-    // Two tabs side by side: each gets half of the page area, with a gap between.
-    const half = Math.floor((bounds.width - SPLIT_GAP) / 2);
-    tab.view.setBounds({ ...bounds, width: half });
-    pane.view.setBounds({ ...bounds, x: bounds.x + half + SPLIT_GAP, width: bounds.width - half - SPLIT_GAP });
-    tab.view.setBorderRadius(radius);
-    pane.view.setBorderRadius(radius);
+  for (const v of views) v.view.setBorderRadius(radius);
+
+  // A tab in HTML fullscreen (a video) covers the whole window, even in a split.
+  const fs = W.fullscreenTab;
+  if (fs && fs.view && views.includes(fs)) {
+    fs.view.setBounds(bounds);
+    W.win.contentView.addChildView(fs.view); // above its split partner
+    for (const v of views) if (v !== fs) v.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+    emit('split', null);
     return;
   }
-  tab.view.setBounds(bounds);
-  tab.view.setBorderRadius(radius);
+
+  if (views.length === 2 && t.pair) {
+    const left = t.get(t.pair.left);
+    const right = t.get(t.pair.right);
+    const avail = Math.max(0, bounds.width - SPLIT_GAP);
+    const lw = Math.round(avail * t.splitRatio);
+    const top = bounds.y + SPLIT_BAR;
+    const height = Math.max(0, bounds.height - SPLIT_BAR);
+    const rx = bounds.x + lw + SPLIT_GAP;
+    left.view.setBounds({ x: bounds.x, y: top, width: lw, height });
+    right.view.setBounds({ x: rx, y: top, width: avail - lw, height });
+    emit('split', {
+      left: { x: bounds.x, width: lw },
+      right: { x: rx, width: avail - lw },
+      gap: { x: bounds.x + lw, width: SPLIT_GAP },
+      top: bounds.y,
+      page: { x: bounds.x, width: bounds.width },
+      active: t.activeId === left.id ? 'left' : 'right',
+    });
+    return;
+  }
+
+  views[0].view.setBounds(bounds);
+  emit('split', null);
 }
 
 /** Pin a privileged webContents to its own page: no navigation, popups, or webviews. */
@@ -228,10 +298,15 @@ function lockDown(wc) {
   wc.on('will-attach-webview', (e) => e.preventDefault());
 }
 
-function createWindow() {
+/**
+ * Open a browser window. `opts.bounds` places it (otherwise the last saved
+ * size and position); `opts.maximized` overrides the saved maximized state;
+ * `opts.inactive` shows it without taking focus.
+ */
+function createWindow(opts = {}) {
   const s = data.settings.data;
-  const b = s.windowBounds || {};
-  const state = { win: null, ui: null, overlay: null, tabs: null };
+  const b = opts.bounds || s.windowBounds || {};
+  const state = newWindowState();
   winStates.push(state);
   W = state;
   W.win = new BrowserWindow({
@@ -256,10 +331,15 @@ function createWindow() {
   });
   W.ui = W.win.webContents;
   W.ui.loadFile(path.join(ROOT, 'ui', 'index.html'));
-  if (s.maximized) W.win.maximize();
+  if (opts.maximized !== undefined ? opts.maximized : s.maximized) W.win.maximize();
 
   // Bound to this window's own state (see `bind` below).
-  state.win.once('ready-to-show', () => inWindow(state, () => { if (state.win && !state.win.isDestroyed()) state.win.show(); updatePeekWatch(); }));
+  state.win.once('ready-to-show', () => inWindow(state, () => {
+    if (!state.win || state.win.isDestroyed()) return;
+    if (opts.inactive) state.win.showInactive();
+    else state.win.show();
+    updatePeekWatch();
+  }));
 
   W.overlay = new Overlay(W.win, UI_PRELOAD);
   W.overlay.onState = (type) => inWindow(state, () => emit('overlay', type));
@@ -270,17 +350,35 @@ function createWindow() {
   lockDown(W.ui);
   lockDown(W.overlay.wc);
 
+  // Coffee's own right-click menus everywhere on the frame: cut/copy/paste in
+  // the address bar and find box, and the tabs-and-window menu anywhere else
+  // that has no menu of its own (tabs, bookmarks, Back/Forward have theirs).
+  W.ui.on('context-menu', (_e, params) => inWindow(state, () => {
+    if (params.isEditable) chromeEditMenu(params);
+    else sidebarMenu(params.x, params.y);
+  }));
+  // The title bar and other drag areas would get Windows' own menu instead.
+  W.win.on('system-context-menu', (e, point) => {
+    e.preventDefault();
+    inWindow(state, () => {
+      const c = state.win.getContentBounds();
+      sidebarMenu(point.x - c.x, point.y - c.y);
+    });
+  });
+
   // Window-level events run against this window's own state, not whichever
   // window happens to be current.
   const bind = (fn) => (...args) => inWindow(state, () => fn(...args));
   const sendState = bind(() => { layout(); emit('window', windowState()); });
   W.win.on('resize', bind(layout));
   for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) W.win.on(ev, sendState);
+  // The focused window becomes the current one (for a second launch, a new window...).
+  W.win.on('focus', () => { W = state; state.lastFocus = Date.now(); });
   W.win.on('focus', bind(() => { emit('window', windowState()); updatePeekWatch(); refreshDefaultBrowser(); }));
   W.win.on('blur', bind(() => {
     emit('window', windowState());
     updatePeekWatch();
-    if (W.overlay.type !== 'suggest') W.overlay.close();
+    if (W.overlay.type !== 'suggest' && W.overlay.type !== 'splitdrag') W.overlay.close();
   }));
 
   // Mouse back/forward buttons.
@@ -289,21 +387,33 @@ function createWindow() {
     else if (cmd === 'browser-forward') goForward();
   }));
 
-  W.win.on('close', bind(() => {
+  W.win.on('close', () => {
     data.settings.data.maximized = state.win.isMaximized();
     data.settings.data.windowBounds = state.win.getNormalBounds();
     data.settings.save();
-    saveAllSessions();
-  }));
-  W.win.on('closed', bind(() => {
+    // When the whole app is quitting, the session was already saved with every
+    // window in before-quit; saving again here would drop windows closed first.
+    if (!quitting) saveAllSessions();
+  });
+  // Not run through inWindow: it changes which window is current, and
+  // inWindow would put the closed window back afterwards.
+  W.win.on('closed', () => {
+    clearInterval(state.peekTimer);
+    state.peekTimer = null;
+    const hadPrivate = state.tabs.tabs.some((t) => t.private);
     state.tabs.destroy();
+    try { if (!state.overlay.wc.isDestroyed()) state.overlay.wc.close(); } catch { /* already gone */ }
     state.win = null;
     const i = winStates.indexOf(state);
     if (i >= 0) winStates.splice(i, 1);
-    // If the closed window was the current one, hand "current" to a window still open.
-    // With none left, `W` keeps pointing at the (closed) state; nothing reads it then.
+    // Hand "current" to a window that's still open. With none left, `W`
+    // keeps pointing at the closed state; nothing reads it then.
     if (W === state && winStates.length) W = winStates[winStates.length - 1];
-  }));
+    if (tabDrag && tabDrag.from === state) finishTabDrag(false);
+    if (hadPrivate && !anyPrivateTabs()) endPrivateBrowsing();
+    // Forget the closed window in the saved session (other windows stay).
+    if (winStates.length && !quitting) scheduleSessionSave();
+  });
 
   const hooks = {
     radius: () => pageBounds().radius,
@@ -311,36 +421,36 @@ function createWindow() {
     layout,
     render: (snap) => {
       emit('tabs', snap);
-      W.overlay.update('sidebar', { ...snap, titles: peekTitles() });
-      // Session snapshots walk every tab's history, so keep them rare.
-      clearTimeout(sessionTimer);
-      sessionTimer = setTimeout(saveAllSessions, 2000);
+      W.overlay.update('sidebar', { ...snap, titles: peekTitles(), canTear: canTear() });
+      scheduleSessionSave();
     },
-    activated: (tab) => {
+    activated: (tab, opts = {}) => {
       if (ext) ext.tabSelected(tab);
       if (W.overlay.isOpen()) W.overlay.close();
-      if (tab.url.startsWith(NEWTAB)) {
+      if (tab.url.startsWith(NEWTAB) && !opts.fromPage) {
         // A freshly shown page takes keyboard focus as it attaches and loads,
         // without a 'focus' event, so keep handing focus back to the address
         // bar while it settles (until you type there or click the page).
         tab.urlbarUntil = Date.now() + 2500;
         focusUrlbar();
-        const reclaim = () => {
-          if (tab !== W.tabs.active || !(tab.urlbarUntil > Date.now()) || !W.ui || W.ui.isDestroyed()) return;
+        // Timers fire outside this handler, so they name their own window.
+        const reclaim = () => inWindow(state, () => {
+          if (!state.tabs || tab !== state.tabs.active || !(tab.urlbarUntil > Date.now()) || !W.ui || W.ui.isDestroyed()) return;
           if (!W.ui.isFocused()) focusUrlbar();
-        };
+        });
         for (const ms of [30, 120, 300, 700]) setTimeout(reclaim, ms);
         if (tab.wc) {
           tab.wc.once('dom-ready', reclaim);
           tab.wc.once('did-finish-load', () => { reclaim(); setTimeout(reclaim, 50); });
         }
       }
-      else if (tab.wc) tab.wc.focus();
+      else if (tab.wc && !opts.fromPage) tab.wc.focus();
       emit('find:close');
     },
     bookmarksChanged: bookmarksChanged,
     htmlFullscreen: (tab, on) => {
-      htmlFullscreenTab = on ? tab : null;
+      if (!on && W.fullscreenTab && W.fullscreenTab !== tab) return; // another tab is the fullscreen one
+      W.fullscreenTab = on ? tab : null;
       W.win.setFullScreen(on);
       updatePeekWatch();
       layout();
@@ -353,6 +463,13 @@ function createWindow() {
     contextMenu: (tab, params) => pageMenu(tab, params),
     input: (e, input, tab) => onInput(e, input, tab),
     pageFocus: (tab) => {
+      // Clicking into the other half of a split makes it the active tab, so
+      // the address bar, back/forward and shortcuts act on the page in use.
+      if (tab.id === W.tabs.pane) {
+        W.tabs.activate(tab.id, { fromPage: true });
+        emit('page-focus');
+        return;
+      }
       if (tab === W.tabs.active && tab.urlbarUntil > Date.now()) {
         focusUrlbar();
         return;
@@ -362,9 +479,11 @@ function createWindow() {
     },
     zoom: (tab, dir) => zoom(dir, tab),
     privateSession: getPrivateSession,
-    privateEnded: endPrivateBrowsing,
+    // Private tabs in other windows still use the private session.
+    privateEnded: () => { if (!anyPrivateTabs()) endPrivateBrowsing(); },
     viewCreated: (tab) => { if (ext) ext.tabCreated(tab, W.win); },
     viewDestroyed: (tab) => { if (ext) ext.tabRemoved(tab); },
+    keepPip,
   };
   // Each hook runs against this window's own state.
   const boundHooks = Object.fromEntries(Object.entries(hooks).map(([k, fn]) => [k, bind(fn)]));
@@ -372,6 +491,11 @@ function createWindow() {
   // Leave the new window current: it's the one in front after it's created.
   W = state;
   return state;
+}
+
+/** Whether any open window still has a private tab. */
+function anyPrivateTabs() {
+  return winStates.some((st) => st.tabs && st.tabs.tabs.some((t) => t.private));
 }
 
 // ---------------------------------------------------------------------------
@@ -391,13 +515,26 @@ function navigate(url, { newTab = false, background = false } = {}) {
   }
   const tab = W.tabs.active;
   if (!tab) return W.tabs.create({ url });
+  // A popped-out video keeps playing: its page is handed off, not replaced.
+  if (tab.pip && tab.handoff({ url })) return;
   tab.ensureView();
   tab.wc.loadURL(url).catch(() => {});
   tab.wc.focus();
 }
 
-function goBack() { const wc = activeWc(); if (wc && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); }
-function goForward() { const wc = activeWc(); if (wc && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); }
+/** Back (-1) or forward (1) in the active tab, keeping a popped-out video playing. */
+function goHistory(offset) {
+  const tab = W.tabs.active;
+  const wc = tab && tab.wc;
+  if (!wc) return;
+  const h = wc.navigationHistory;
+  if (offset < 0 ? !h.canGoBack() : !h.canGoForward()) return;
+  if (tab.pip && tab.handoff({ offset })) return;
+  if (offset < 0) h.goBack();
+  else h.goForward();
+}
+function goBack() { goHistory(-1); }
+function goForward() { goHistory(1); }
 
 function reload(hard = false) {
   const tab = W.tabs.active;
@@ -424,17 +561,28 @@ function zoom(dir, tab = W.tabs.active) {
   W.tabs.changed();
 }
 
+/** Bookmarks are shared by every window (the bar can appear or vanish, so re-layout too). */
 function bookmarksChanged() {
-  emit('bookmarks', data.bookmarks.data);
-  emit('settings', publicSettings());
-  layout();
+  eachWindow(() => {
+    emit('bookmarks', data.bookmarks.data);
+    emit('settings', publicSettings());
+    layout();
+  });
+}
+
+/** Re-apply settings that change the chrome's look or layout, in every window. */
+function refreshWindows() {
+  eachWindow(() => {
+    layout();
+    updatePeekWatch();
+    emit('settings', publicSettings());
+  });
 }
 
 function toggleBookmarksBar() {
   data.settings.data.bookmarksBar = !data.settings.data.bookmarksBar;
   data.settings.save();
-  layout();
-  emit('settings', publicSettings());
+  refreshWindows();
 }
 
 function publicSettings() {
@@ -447,6 +595,7 @@ function publicSettings() {
     compactSidebar: !!data.settings.data.compactSidebar,
     tabTitles: data.settings.data.tabTitles !== false,
     extensions: !!ext,
+    canTear: canTear(),
     adblock: s.adblock,
     adblockExceptions: s.adblockExceptions || [],
     showHome: !!s.showHome,
@@ -480,14 +629,15 @@ function openSettings(section) {
 
 function onInput(e, input, tab) {
   if (input.type !== 'keyDown') return;
+  if (input.key === 'Escape' && cancelTabDrag()) { e.preventDefault(); return; }
   const key = input.key.length === 1 ? input.key.toLowerCase() : input.key;
   const ctrl = input.control || input.meta;
   const { shift, alt } = input;
   let handled = true;
 
   if (ctrl && !alt) {
-    if (key === 'n' && !shift && data.settings.data.experimental) openNewWindow();
-  else if (key === 't' && !shift) W.tabs.create();
+    if (key === 'n' && !shift && multiWindow()) openNewWindow();
+    else if (key === 't' && !shift) W.tabs.create();
     else if (key === 'n' && shift) W.tabs.create({ private: true });
     else if (key === 't' && shift) W.tabs.reopenClosed();
     else if ((key === 'w' && !shift) || key === 'F4') W.tabs.active && W.tabs.close(W.tabs.activeId);
@@ -517,14 +667,15 @@ function onInput(e, input, tab) {
     if (key === 'ArrowLeft') goBack();
     else if (key === 'ArrowRight') goForward();
     else if (key === 'd') focusUrlbar();
+    else if (key === 'p') toggleVideoPopout(W.tabs.active);
     else if (key === 'Home') navigate(homeUrl());
     else handled = false;
   } else if (!ctrl && !alt) {
     if (key === 'F5') reload(false);
     else if (key === 'F6') focusUrlbar();
-    else if (key === 'F11') { htmlFullscreenTab = null; W.win.setFullScreen(!W.win.isFullScreen()); }
+    else if (key === 'F11') { W.fullscreenTab = null; W.win.setFullScreen(!W.win.isFullScreen()); }
     else if (key === 'F12') toggleDevTools();
-    else if (key === 'Escape' && htmlFullscreenTab && tab === htmlFullscreenTab) {
+    else if (key === 'Escape' && W.fullscreenTab && tab === W.fullscreenTab) {
       tab.wc.executeJavaScript('document.fullscreenElement && document.exitFullscreen()').catch(() => {});
     }
     else if (key === 'Escape' && W.overlay.isOpen()) W.overlay.close();
@@ -546,24 +697,32 @@ function toggleDevTools() {
 // Overlay popups
 // ---------------------------------------------------------------------------
 
+// Row heights, mirrored in src/ui/overlay.css (.mi, .mzoom, .msep).
 function menuSize(items) {
   let h = 10;
-  for (const it of items) h += it.sep ? 9 : 30;
-  return { width: 256 + 2 * M, height: h + 2 * M };
+  for (const it of items) h += it.sep ? 9 : it.zoom ? 36 : 30;
+  return { width: 264 + 2 * M, height: h + 2 * M };
 }
 
-/** Show a context menu at window coords (x, y). */
-function showMenu(x, y, items) {
-  const visible = items.filter((it, i) => !(it.sep && (i === 0 || items[i - 1].sep || i === items.length - 1)));
+/**
+ * Show a menu at window coords (x, y). Items: { label, accel, icon, checked,
+ * disabled, action(pick) } or { sep } or { zoom: { value, fullscreen }, action }.
+ * `opts.reopen`: refresh a menu that's already open, in place.
+ */
+function showMenu(x, y, items, opts = {}) {
+  // No separators at the ends or twice in a row.
+  const visible = items.filter((it, i, a) => !(it.sep && (i === 0 || a[i - 1].sep || i === a.length - 1)));
   const size = menuSize(visible);
   const [w, h] = W.win.getContentSize();
   let left = x - M + 2;
   let top = y - M + 2;
+  if (opts.alignRight) left = x - size.width + M;
   if (left + size.width > w) left = x - size.width + M - 2;
+  if (left < 0) left = 0;
   if (top + size.height > h) top = Math.max(0, y - size.height + M - 2);
   W.overlay.open('menu', { x: left, y: top, ...size },
-    { items: visible.map(({ label, accel, disabled, sep, checked }) => ({ label, accel, disabled, sep, checked })) },
-    { focus: true, onPick: (p) => { const it = visible[p.index]; if (it && !it.disabled && it.action) it.action(); } });
+    { items: visible.map(({ label, accel, disabled, sep, checked, icon, zoom: z }) => ({ label, accel, disabled, sep, checked, icon, zoom: z })) },
+    { focus: true, onPick: (p) => { const it = visible[p.index]; if (it && !it.disabled && it.action) it.action(p); } });
 }
 
 function pageMenu(tab, params) {
@@ -595,6 +754,12 @@ function pageMenu(tab, params) {
       sep,
     );
   }
+  if (params.mediaType === 'video') {
+    items.push(
+      { label: tab.pip ? 'Close pop-out video' : 'Pop out video', accel: 'Alt+P', action: () => toggleVideoPopout(tab, params.frame) },
+      sep,
+    );
+  }
   if (params.isEditable) {
     const f = params.editFlags;
     items.push(
@@ -609,20 +774,20 @@ function pageMenu(tab, params) {
     );
   } else if (params.selectionText && params.selectionText.trim()) {
     const text = params.selectionText.trim();
-    const short = text.length > 22 ? `${text.slice(0, 22)}â€¦` : text;
+    const short = text.length > 22 ? `${text.slice(0, 22)}…` : text;
     items.push(
       { label: 'Copy', accel: 'Ctrl+C', action: () => wc.copy() },
-      { label: `Search for â€œ${short}â€`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) },
+      { label: `Search for “${short}”`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) },
       sep,
     );
   }
   if (!params.linkURL && !params.isEditable && !params.selectionText) {
     items.push(
-      { label: 'Back', accel: 'Alt+â†', disabled: !wc.navigationHistory.canGoBack(), action: goBack },
-      { label: 'Forward', accel: 'Alt+â†’', disabled: !wc.navigationHistory.canGoForward(), action: goForward },
+      { label: 'Back', accel: 'Alt+←', disabled: !wc.navigationHistory.canGoBack(), action: goBack },
+      { label: 'Forward', accel: 'Alt+→', disabled: !wc.navigationHistory.canGoForward(), action: goForward },
       { label: 'Reload', accel: 'Ctrl+R', action: () => reload() },
       sep,
-      { label: 'Printâ€¦', accel: 'Ctrl+P', action: () => wc.print() },
+      { label: 'Print…', accel: 'Ctrl+P', action: () => wc.print() },
       { label: 'View page source', accel: 'Ctrl+U', disabled: !/^https?:/.test(tab.url), action: () => navigate(`view-source:${tab.url}`, { newTab: true }) },
       sep,
     );
@@ -633,7 +798,8 @@ function pageMenu(tab, params) {
   }
   items.push({ label: 'Inspect', accel: 'F12', action: () => { wc.inspectElement(params.x, params.y); } });
 
-  const { bounds } = pageBounds();
+  // The menu goes where the click was, in whichever half of a split the tab is.
+  const bounds = tab.view ? tab.view.getBounds() : pageBounds().bounds;
   showMenu(bounds.x + params.x, bounds.y + params.y, items);
 }
 
@@ -651,12 +817,12 @@ function tabMenu(id, x, y) {
       W.tabs.changed();
     } },
     { label: 'Copy link', disabled: !shown, action: () => clipboard.writeText(shown) },
-    { label: 'Put to sleep', disabled: tab.id === W.tabs.activeId || !tab.wc, action: () => tab.sleep() },
-    { sep: true },
-    ...(data.settings.data.experimental ? [
-      { label: 'Open beside', disabled: tab.id === W.tabs.activeId || !W.tabs.active, action: () => W.tabs.split(tab.id) },
-      ...(W.tabs.pane ? [{ label: 'Show one tab', action: () => W.tabs.unsplit() }] : []),
+    { label: 'Put to sleep', disabled: W.tabs.shown.has(tab.id) || !tab.wc || tab.pip, action: () => tab.sleep() },
+    ...(tab.pip || (tab.wc && tab.playing) ? [
+      { label: tab.pip ? 'Close pop-out video' : 'Pop out video', accel: 'Alt+P', action: () => toggleVideoPopout(tab) },
     ] : []),
+    { sep: true },
+    ...splitAndWindowItems(tab),
     { label: 'Close tab', accel: 'Ctrl+W', action: () => W.tabs.close(tab.id) },
     { label: 'Close other tabs', disabled: W.tabs.tabs.length < 2, action: () => {
       for (const t of [...W.tabs.tabs]) if (t !== tab) W.tabs.close(t.id);
@@ -667,20 +833,470 @@ function tabMenu(id, x, y) {
   ]);
 }
 
-function sidebarMenu(x, y) {
-  const recent = W.tabs.closed.slice(-8).reverse();
+/** A short label for a window: the title of its active tab. */
+function windowLabel(state) {
+  const t = state.tabs && state.tabs.active;
+  const title = (t && (t.title || displayUrl(t.url))) || 'New Tab';
+  return title.length > 28 ? `${title.slice(0, 27)}…` : title;
+}
+
+/** Tab menu items for split view and moving between windows (each when turned on). */
+function splitAndWindowItems(tab) {
+  const items = [];
+  const t = W.tabs;
+  if (splitOn()) {
+    const paired = t.pair && (t.pair.left === tab.id || t.pair.right === tab.id);
+    if (paired) {
+      items.push(
+        { label: 'Swap sides', icon: 'swap', action: () => t.swapPanes() },
+        { label: 'Close split view', icon: 'split', action: () => t.unsplit() },
+      );
+    } else {
+      items.push({ label: 'Open beside current tab', icon: 'split', disabled: tab.id === t.activeId || !t.active, action: () => t.split(tab.id) });
+    }
+  }
+  if (multiWindow()) {
+    const from = W;
+    items.push({ label: 'Move to new window', icon: 'window', disabled: t.tabs.length < 2, action: () => moveTabToNewWindow(from, tab.id) });
+    for (const other of winStates.filter((s) => s !== from && s.win && !s.win.isDestroyed()).slice(0, 4)) {
+      items.push({ label: `Move to window: ${windowLabel(other)}`, action: () => moveTabToWindow(from, tab.id, other, Infinity) });
+    }
+  }
+  if (items.length) items.push({ sep: true });
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Video pop-out (picture in picture): a page's video plays in a small
+// always-on-top window while you use other tabs, windows or apps.
+//
+// The floating window has two buttons. "Back to tab" returns the video to
+// the tab it came from (even after you went elsewhere in that tab, or closed
+// it); its X closes the video. Chromium pauses the video on X and leaves it
+// playing on "Back to tab", which is how the two are told apart.
+// ---------------------------------------------------------------------------
+
+// Run in each frame: how good a candidate this frame's best video is, and
+// whether the frame already has a popped-out video.
+const PIP_PROBE = `(() => {
+  const vids = [];
+  const walk = (root) => {
+    for (const v of root.querySelectorAll('video')) vids.push(v);
+    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) walk(el.shadowRoot);
+  };
+  walk(document);
+  let best = 0;
+  for (const v of vids) {
+    if (v.readyState < 1) continue;
+    const r = v.getBoundingClientRect();
+    const score = 1 + r.width * r.height + (!v.paused && !v.ended ? 1e9 : 0) + (!v.muted ? 1e8 : 0);
+    if (score > best) best = score;
+  }
+  return { score: best, pip: !!document.pictureInPictureElement };
+})()`;
+
+// Run in the chosen frame, with a user gesture: pop out its best video.
+const PIP_START = `(async () => {
+  const vids = [];
+  const walk = (root) => {
+    for (const v of root.querySelectorAll('video')) vids.push(v);
+    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) walk(el.shadowRoot);
+  };
+  walk(document);
+  const score = (v) => {
+    const r = v.getBoundingClientRect();
+    return r.width * r.height + (!v.paused && !v.ended ? 1e9 : 0) + (!v.muted ? 1e8 : 0);
+  };
+  const v = vids.filter((x) => x.readyState >= 1).sort((a, b) => score(b) - score(a))[0];
+  if (!v) return false;
+  // Some sites turn pop-out off for their player; the person asked for it.
+  v.disablePictureInPicture = false;
+  v.removeAttribute('disablepictureinpicture');
+  await v.requestPictureInPicture();
+  window[Symbol.for('coffee.pipVideo')] = v;
+  return true;
+})()`;
+
+// Run in that frame: settles when the floating window closes, saying which
+// button closed it (X pauses the video; "Back to tab" leaves it playing).
+const PIP_WAIT = `new Promise((resolve) => {
+  const v = window[Symbol.for('coffee.pipVideo')];
+  if (!v || document.pictureInPictureElement !== v) { resolve({ back: false }); return; }
+  v.addEventListener('leavepictureinpicture', () => {
+    // Read at once: X pauses the video before the window closes, while a page
+    // that's out of sight may have its video paused just after (Back to tab).
+    resolve({ back: !v.paused && !v.ended });
+  }, { once: true });
+})`;
+
+/** Every live frame of a page (main frame first). */
+function framesOf(wc) {
+  try { return wc.mainFrame.framesInSubtree.filter((f) => !f.detached); } catch { return []; }
+}
+
+/**
+ * Pages whose popped-out video outlived their place in a tab (you went back,
+ * followed a link, or closed the tab or window). They keep running out of
+ * sight, so the video plays on, until the floating video is closed (the page
+ * is let go) or sent "Back to tab" (the page goes back into a tab).
+ */
+const pipKept = new Set();
+// Pages whose floating video Coffee itself is closing (or replacing): when it
+// closes, that's not a "Back to tab".
+const pipClosing = new WeakSet();
+
+function keepPip(view, origin) {
+  const wc = view.webContents;
+  if (wc.isDestroyed()) return;
+  view.origin = origin || {};
+  view.missed = 0;
+  pipKept.add(view);
+  wc.once('destroyed', () => { if (pipKept.delete(view)) popoutChanged(); });
+  popoutChanged();
+  watchPip();
+}
+
+function releaseKept(view) {
+  pipKept.delete(view);
+  if (!view.webContents.isDestroyed()) view.webContents.close();
+  popoutChanged();
+  // The last window was closed while the video played: now the app can go.
+  if (!winStates.length && !pipKept.size) app.quit();
+}
+
+/** Bring the window forward and give it focus. */
+function bringForward(state) {
+  const w = state.win;
+  if (!w || w.isDestroyed()) return;
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.focus();
+}
+
+/**
+ * "Back to tab" for a page that was handed off: it goes back into the tab it
+ * came from, replacing what that tab shows now (the video carries on playing
+ * there). If that tab is gone, the page opens in a new tab instead.
+ */
+function returnKept(view) {
+  pipKept.delete(view);
+  popoutChanged();
+  const wc = view.webContents;
+  if (wc.isDestroyed()) return;
+  disarmPipGuard(wc);
+  const origin = view.origin || {};
+  const home = origin.tab && winStates.find((s) => s.tabs && s.tabs.tabs.includes(origin.tab));
+  if (home) {
+    inWindow(home, () => {
+      origin.tab.takeView(view, origin);
+      home.tabs.activate(origin.tab.id);
+    });
+    bringForward(home);
+    return;
+  }
+  const state = (W.win && !W.win.isDestroyed() && winStates.includes(W)) ? W : (winStates[winStates.length - 1] || createWindow());
+  inWindow(state, () => {
+    const tab = state.tabs.create({ background: true, init: { url: wc.getURL(), title: origin.title, favicon: origin.favicon, private: !!origin.private } });
+    tab.muted = !!origin.muted;
+    tab.takeView(view, origin);
+    state.tabs.activate(tab.id);
+  });
+  bringForward(state);
+}
+
+/** The floating window of page `wc` closed. `back`: by "Back to tab". */
+function pipEnded(wc, back) {
+  if (pipClosing.has(wc)) { pipClosing.delete(wc); back = false; }
+  const kept = [...pipKept].find((v) => v.webContents === wc);
+  if (kept) {
+    if (back) returnKept(kept);
+    else releaseKept(kept);
+    return;
+  }
+  const found = findTab(wc);
+  if (!found) return;
+  if (found.tab.pip) setPip(found.tab, false);
+  // "Back to tab" while the tab is out of view: show it.
+  if (back) {
+    inWindow(found.state, () => found.state.tabs.activate(found.tab.id));
+    bringForward(found.state);
+  }
+}
+
+/** Tell every window whether a video is playing popped out from a page no tab shows. */
+function popoutChanged() {
+  eachWindow(() => emit('popout', pipKept.size > 0));
+}
+
+/** Close the floating video of page `wc` (Coffee's own doing, not "Back to tab"). */
+async function exitPip(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  pipClosing.add(wc);
+  await Promise.all(framesOf(wc).map((f) => f.executeJavaScript('document.pictureInPictureElement && document.exitPictureInPicture()', true).catch(() => {})));
+}
+
+/** Close any popped-out video that's playing from a page no tab shows. */
+async function closeKeptPopouts() {
+  for (const view of [...pipKept]) {
+    await exitPip(view.webContents);
+    releaseKept(view);
+  }
+}
+
+/**
+ * Pop the page's video out into a floating window, or bring it back. With
+ * nothing playing here, it closes a video still popped out from a page you left.
+ */
+async function toggleVideoPopout(tab, preferFrame) {
+  const wc = tab && tab.wc;
+  if (!wc) { if (pipKept.size) closeKeptPopouts(); return; }
+  const probes = await Promise.all(framesOf(wc).map((f) => f.executeJavaScript(PIP_PROBE)
+    .then((r) => (r ? { f, ...r } : null), () => null)));
+  const live = probes.filter(Boolean);
+  if (live.some((x) => x.pip)) {
+    await exitPip(wc);
+    setPip(tab, false);
+    return;
+  }
+  const candidates = live.filter((x) => x.score > 0).sort((a, b) => b.score - a.score);
+  const pick = candidates.find((x) => x.f === preferFrame) || candidates[0];
+  // Nothing to pop out here (or nothing playing, while a video from a page
+  // you left is still out): the button / Alt+P closes that one.
+  if (!pick || (pipKept.size && !preferFrame && !tab.playing && !tab.audible)) {
+    if (pipKept.size) closeKeptPopouts();
+    return;
+  }
+  // Only one video can be popped out at a time: the one out now gets replaced.
+  for (const t of allTabs()) if (t !== tab && t.pip && t.wc) pipClosing.add(t.wc);
+  for (const v of pipKept) pipClosing.add(v.webContents);
+  const ok = await pick.f.executeJavaScript(PIP_START, true).catch(() => false);
+  if (!ok) return;
+  for (const t of allTabs()) if (t !== tab && t.pip) setPip(t, false);
+  setPip(tab, true);
+  // Settles when the floating window closes, wherever the page is by then.
+  pick.f.executeJavaScript(PIP_WAIT).then((r) => pipEnded(wc, !!(r && r.back))).catch(() => pipEnded(wc, false));
+}
+
+function setPip(tab, on) {
+  if (tab.pip === on) return;
+  tab.pip = on;
+  tab.mgr.changed();
+  if (on) { watchPip(); armPipGuard(tab); }
+  else disarmPipGuard(tab.wc);
+}
+
+// A backstop for the above: now and then (only while a video is popped out),
+// check the floating windows are still open.
+let pipTimer = null;
+function watchPip() {
+  if (pipTimer) return;
+  pipTimer = setInterval(async () => {
+    const tabs = allTabs().filter((t) => t.pip);
+    if (!tabs.length && !pipKept.size) { clearInterval(pipTimer); pipTimer = null; return; }
+    const isOpen = async (wc) => (await Promise.all(framesOf(wc).map((f) => f.executeJavaScript('!!document.pictureInPictureElement').catch(() => false)))).some(Boolean);
+    for (const t of tabs) {
+      if (!t.wc || !(await isOpen(t.wc))) setPip(t, false);
+    }
+    for (const view of [...pipKept]) {
+      if (view.webContents.isDestroyed()) { releaseKept(view); continue; }
+      // Several misses in a row: the close was never reported, so let it go.
+      view.missed = (await isOpen(view.webContents)) ? 0 : view.missed + 1;
+      if (view.missed >= 3) releaseKept(view);
+    }
+  }, 1000);
+}
+
+// Sites like YouTube change pages without loading a new one: clicking a link
+// (the logo, the home page, another video) rewrites the page in place, and the
+// player, with its popped-out video, goes away. While a video is popped out,
+// this catches such clicks (and plain search forms) before the site sees them
+// and resolves with where they lead, so the browser can hand the page off
+// (the video keeps playing) and open that address in the tab instead.
+const PIP_GUARD = `new Promise((resolve) => {
+  const key = Symbol.for('coffee.pipGuard');
+  if (window[key]) window[key]();
+  const plain = (e) => !e.defaultPrevented && e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
+  const elsewhere = (u) => /^(https?|file):$/.test(u.protocol) && u.href.split('#')[0] !== location.href.split('#')[0];
+  const onClick = (e) => {
+    if (!plain(e)) return;
+    const a = e.composedPath().find((n) => n instanceof HTMLAnchorElement && n.href);
+    if (!a || a.hasAttribute('download')) return;
+    const target = (a.getAttribute('target') || '').toLowerCase();
+    if (target && target !== '_self' && target !== '_top') return;
+    let u;
+    try { u = new URL(a.href, location.href); } catch { return; }
+    if (!elsewhere(u)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    done({ url: u.href });
+  };
+  const onSubmit = (e) => {
+    const f = e.target;
+    if (!(f instanceof HTMLFormElement) || (f.method || 'get').toLowerCase() !== 'get') return;
+    let u;
+    try { u = new URL(f.action || location.href, location.href); } catch { return; }
+    u.search = new URLSearchParams(new FormData(f)).toString();
+    if (!elsewhere(u)) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    done({ url: u.href });
+  };
+  function done(result) {
+    window.removeEventListener('click', onClick, true);
+    window.removeEventListener('submit', onSubmit, true);
+    delete window[key];
+    resolve(result || null);
+  }
+  window[key] = () => done(null);
+  window.addEventListener('click', onClick, true);
+  window.addEventListener('submit', onSubmit, true);
+})`;
+
+function armPipGuard(tab) {
+  const wc = tab.wc;
+  if (!wc) return;
+  wc.mainFrame.executeJavaScript(PIP_GUARD).then((r) => {
+    if (r && r.url && tab.wc === wc && tab.pip) tab.handoff({ url: r.url });
+  }).catch(() => { /* page went away */ });
+}
+
+function disarmPipGuard(wc) {
+  if (!wc || wc.isDestroyed()) return;
+  wc.mainFrame.executeJavaScript("(window[Symbol.for('coffee.pipGuard')] || (() => {}))()").catch(() => {});
+}
+
+/**
+ * Right-click on the browser's own frame: empty tab space, the title bar,
+ * toolbar buttons. Tabs, recently closed tabs, and the window itself (in
+ * place of Windows' own menu for the title bar).
+ */
+function sidebarMenu(x, y, { windowItems = true } = {}) {
+  const recent = W.tabs.closed.slice(-5).reverse();
   const items = [
-    { label: 'New tab', accel: 'Ctrl+T', action: () => W.tabs.create() },
-    { label: 'New private tab', accel: 'Ctrl+Shift+N', action: () => W.tabs.create({ private: true }) },
-    { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', disabled: !recent.length, action: () => W.tabs.reopenClosed() },
+    { label: 'New tab', accel: 'Ctrl+T', icon: 'plus', action: () => W.tabs.create() },
+    ...(multiWindow() ? [{ label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() }] : []),
+    { label: 'New private tab', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => W.tabs.create({ private: true }) },
+    { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', icon: 'reload', disabled: !recent.length, action: () => W.tabs.reopenClosed() },
   ];
   if (recent.length) {
     items.push({ sep: true }, { label: 'Recently closed', disabled: true });
     recent.forEach((c, i) => {
       const title = c.init.title || displayUrl(c.init.url) || 'Untitled';
-      items.push({ label: title.length > 34 ? `${title.slice(0, 33)}â€¦` : title, action: () => W.tabs.reopenClosed(W.tabs.closed.length - 1 - i) });
+      items.push({ label: title.length > 34 ? `${title.slice(0, 33)}…` : title, action: () => W.tabs.reopenClosed(W.tabs.closed.length - 1 - i) });
     });
   }
+  if (windowItems) {
+    const win = W.win;
+    const max = win.isMaximized();
+    items.push(
+      { sep: true },
+      { label: 'Minimize', icon: 'minimize', action: () => win.minimize() },
+      { label: max ? 'Restore' : 'Maximize', icon: max ? 'restore' : 'maximize', disabled: win.isFullScreen(), action: () => (max ? win.unmaximize() : win.maximize()) },
+      { label: 'Close window', accel: 'Alt+F4', icon: 'winClose', action: () => win.close() },
+    );
+  }
+  showMenu(x, y, items);
+}
+
+/** The ⋯ menu, grouped: open things · find your stuff · this page · watch & view · layout · app. */
+function appMenu(x, y, opts = {}) {
+  const t = W.tabs;
+  const tab = t.active;
+  const wc = activeWc();
+  const s = data.settings.data;
+  const fs = W.win.isFullScreen();
+  // "Split view" splits with the tab you were on before this one.
+  const partner = t.prevActiveId && t.prevActiveId !== t.activeId && t.get(t.prevActiveId) ? t.prevActiveId : null;
+  const popout = (tab && tab.pip) || (pipKept.size && !(tab && (tab.playing || tab.audible)));
+  const reopen = () => appMenu(x, y, { reopen: true });
+  showMenu(x, y, [
+    { label: 'New tab', accel: 'Ctrl+T', icon: 'plus', action: () => t.create() },
+    ...(multiWindow() ? [{ label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() }] : []),
+    { label: 'New private tab', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => t.create({ private: true }) },
+    { sep: true },
+    { label: 'History', accel: 'Ctrl+H', icon: 'history', action: openHistory },
+    { label: 'Downloads', accel: 'Ctrl+J', icon: 'download', action: () => toggleDownloads() },
+    { label: 'Bookmarks', icon: 'bookmarks', action: () => openFolder(BM_ROOT, { x: x - 300, y: y - 6, width: 300, height: 0 }, true) },
+    { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', icon: 'reload', disabled: !t.closed.length, action: () => t.reopenClosed() },
+    { sep: true },
+    {
+      zoom: { value: tab && tab.zoom ? tab.zoom : 100, fullscreen: fs },
+      action: (p) => {
+        if (p.action === 'fullscreen') { W.fullscreenTab = null; W.win.setFullScreen(!fs); return; }
+        zoom(p.action === 'in' ? 1 : p.action === 'out' ? -1 : 0);
+        reopen(); // show the new level
+      },
+    },
+    { label: 'Find in page', accel: 'Ctrl+F', icon: 'search', disabled: !wc, action: () => openFind() },
+    { label: 'Print…', accel: 'Ctrl+P', icon: 'printer', disabled: !wc, action: () => wc.print() },
+    { sep: true },
+    { label: popout ? 'Close pop-out video' : 'Pop out video', accel: 'Alt+P', icon: 'pip', disabled: !wc && !pipKept.size, action: () => toggleVideoPopout(tab) },
+    ...(splitOn() ? [t.pair
+      ? { label: 'Close split view', icon: 'split', action: () => t.unsplit() }
+      : { label: 'Split view with previous tab', icon: 'split', disabled: !partner, action: () => t.split(partner) }] : []),
+    { sep: true },
+    { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: !!s.bookmarksBar, action: toggleBookmarksBar },
+    { label: 'Tabs on top', checked: tabsOnTop(), action: toggleTabLayout },
+    { label: 'Compact sidebar', checked: compactSidebar(), disabled: tabsOnTop(), action: toggleCompact },
+    { sep: true },
+    { label: 'Extensions', icon: 'puzzle', action: () => (ext ? showExtensionsPanel() : openSettings('extensions')) },
+    { label: 'Settings', accel: 'Ctrl+,', icon: 'settings', action: () => openSettings() },
+  ], { reopen: opts.reopen });
+}
+
+/** Cut / copy / paste for the address bar and the find box (they're part of the browser's own page). */
+async function chromeEditMenu(params) {
+  const state = W;
+  const ui = W.ui;
+  const f = params.editFlags || {};
+  const omni = inRect({ x: params.x, y: params.y }, W.omniRect);
+  // Edits go back to the field the menu was opened on.
+  const edit = (fn) => () => { ui.focus(); fn(); };
+  // (Reading the clipboard is asynchronous; the menu shows in its own window after.)
+  const clip = String((await clipboard.readText()) || '').trim();
+  if (!state.win || state.win.isDestroyed()) return;
+  inWindow(state, () => showEditMenu(params, { f, omni, edit, clip, ui }));
+}
+
+function showEditMenu(params, { f, omni, edit, clip, ui }) {
+  const short = clip.length > 24 ? `${clip.slice(0, 24)}…` : clip;
+  const looksLikeAddress = /^[a-z][a-z0-9+.-]*:\/\//i.test(clip) || (!/\s/.test(clip) && /\.[a-z]{2,}(?:[:/?#]|$)/i.test(clip));
+  const pasteGo = looksLikeAddress ? 'Paste and go' : `Paste and search for “${short}”`;
+  showMenu(params.x, params.y, [
+    { label: 'Undo', accel: 'Ctrl+Z', disabled: !f.canUndo, action: edit(() => ui.undo()) },
+    { label: 'Redo', accel: 'Ctrl+Y', disabled: !f.canRedo, action: edit(() => ui.redo()) },
+    { sep: true },
+    { label: 'Cut', accel: 'Ctrl+X', icon: 'cut', disabled: !f.canCut, action: edit(() => ui.cut()) },
+    { label: 'Copy', accel: 'Ctrl+C', icon: 'copy', disabled: !f.canCopy, action: edit(() => ui.copy()) },
+    { label: 'Paste', accel: 'Ctrl+V', icon: 'paste', disabled: !f.canPaste, action: edit(() => ui.paste()) },
+    ...(omni && clip ? [{ label: pasteGo, action: () => { emit('urlbar:blur'); navigate(data.toUrl(clip)); } }] : []),
+    { label: 'Delete', disabled: !f.canDelete, action: edit(() => ui.delete()) },
+    { sep: true },
+    { label: 'Select all', accel: 'Ctrl+A', action: edit(() => ui.selectAll()) },
+  ]);
+}
+
+/** Right-click (or hold) on Back / Forward: the pages you can go back or forward to. */
+function historyMenu(dir, x, y) {
+  const tab = W.tabs.active;
+  const wc = tab && tab.wc;
+  if (!wc) return;
+  const h = wc.navigationHistory;
+  const entries = h.getAllEntries();
+  const at = h.getActiveIndex();
+  const list = (dir < 0 ? entries.map((e, i) => [e, i]).slice(0, at).reverse() : entries.map((e, i) => [e, i]).slice(at + 1)).slice(0, 12);
+  if (!list.length) return;
+  const items = list.map(([e, i]) => {
+    const title = e.title || displayUrl(e.url) || e.url;
+    return {
+      label: title.length > 40 ? `${title.slice(0, 39)}…` : title,
+      action: () => {
+        if (tab.pip && tab.handoff({ offset: i - h.getActiveIndex() })) return;
+        h.goToIndex(i);
+      },
+    };
+  });
+  items.push({ sep: true }, { label: 'Show full history', accel: 'Ctrl+H', icon: 'history', action: openHistory });
   showMenu(x, y, items);
 }
 
@@ -692,8 +1308,8 @@ function bookmarkMenu(id, x, y) {
     showMenu(x, y, [
       { label: `Open all (${inside.length})`, disabled: !inside.length, action: () => openAll(inside) },
       { sep: true },
-      { label: 'New folder insideâ€¦', action: () => folderEditor({ parent: id }) },
-      { label: 'Renameâ€¦', action: () => folderEditor({ id }) },
+      { label: 'New folder inside…', action: () => folderEditor({ parent: id }) },
+      { label: 'Rename…', action: () => folderEditor({ id }) },
       { label: 'Delete folder', action: () => deleteItem(id) },
     ]);
     return;
@@ -703,7 +1319,7 @@ function bookmarkMenu(id, x, y) {
     { label: 'Open in new tab', action: () => navigate(bm.url, { background: true }) },
     { label: 'Copy link', action: () => clipboard.writeText(bm.url) },
     { sep: true },
-    { label: 'Editâ€¦', action: () => editBookmark(bm, null) },
+    { label: 'Edit…', action: () => editBookmark(bm, null) },
     { label: 'Delete', action: () => deleteItem(id) },
   ]);
 }
@@ -713,7 +1329,7 @@ function bookmarksBarMenu(x, y) {
   const tab = W.tabs.active;
   const url = tab && displayUrl(tab.url);
   showMenu(x, y, [
-    { label: 'New folderâ€¦', action: () => folderEditor({ parent: null }) },
+    { label: 'New folder…', action: () => folderEditor({ parent: null }) },
     { label: 'Bookmark this page', accel: 'Ctrl+D', disabled: !url || isInternal(url), action: () => starBookmark() },
     { sep: true },
     { label: 'Hide bookmarks bar', accel: 'Ctrl+Shift+B', action: toggleBookmarksBar },
@@ -738,7 +1354,7 @@ function deleteItem(id) {
   const width = 340 + 2 * M;
   const height = 132 + 2 * M;
   W.overlay.open('confirm', { x: (w - width) / 2, y: Math.max(TOPBAR_H, h / 2 - height), width, height }, {
-    title: `Delete â€œ${item.title}â€?`,
+    title: `Delete “${item.title}”?`,
     message: `This also deletes the ${count} ${count === 1 ? 'item' : 'items'} inside it.`,
     confirm: 'Delete',
   }, { focus: true, onPick: (p) => { if (p.ok) { data.removeBookmark(id); bookmarksChanged(); } } });
@@ -760,21 +1376,20 @@ function folderEditor({ id = null, parent = null }) {
 }
 
 /** Dropdown listing a folder's contents, anchored under its bar button. */
-let folderAnchor = null;
-let folderFromButton = false; // opened from the toolbar button: top-level folders get a way back to the root
+// W.folderFromButton: opened from the toolbar button, so top-level folders get a way back to the root.
 const BM_ROOT = 'root';       // the toolbar button's top-level view (not a real folder)
 function openFolder(id, rect, fromButton) {
   const isRoot = id === BM_ROOT;
   const folder = isRoot ? { id: BM_ROOT, title: 'Bookmarks', parent: null } : data.itemById(id);
   if (!folder || (!isRoot && folder.type !== 'folder')) return;
-  if (rect) folderAnchor = rect;
-  if (typeof fromButton === 'boolean') folderFromButton = fromButton;
-  const r = folderAnchor || { x: 80, y: TOPBAR_H, width: 0, height: BOOKMARKS_H - 4 };
+  if (rect) W.folderAnchor = rect;
+  if (typeof fromButton === 'boolean') W.folderFromButton = fromButton;
+  const r = W.folderAnchor || { x: 80, y: TOPBAR_H, width: 0, height: BOOKMARKS_H - 4 };
   const items = data.children(isRoot ? null : id).map((b) => ({ id: b.id, type: b.type, title: b.title, url: b.url || '', favicon: b.favicon || '' }));
   let back = null;
   if (!isRoot) {
     if (folder.parent) { const p = data.itemById(folder.parent); if (p) back = { id: p.id, title: p.title }; }
-    else if (folderFromButton) back = { id: BM_ROOT, title: 'Bookmarks' };
+    else if (W.folderFromButton) back = { id: BM_ROOT, title: 'Bookmarks' };
   }
   const rows = Math.min(Math.max(items.length, 1), 12);
   const width = 280 + 2 * M;
@@ -786,9 +1401,8 @@ function openFolder(id, rect, fromButton) {
     { focus: true });
 }
 
-let lastStarRect = null;
 function starBookmark(rect) {
-  if (rect) lastStarRect = rect;
+  if (rect) W.starRect = rect;
   const tab = W.tabs.active;
   const url = tab && displayUrl(tab.url);
   if (!url || isInternal(url)) return;
@@ -798,7 +1412,7 @@ function starBookmark(rect) {
     bm = data.addBookmark({ url, title: tab.title, favicon: tab.favicon });
     bookmarksChanged();
   }
-  editBookmark(bm, lastStarRect, created);
+  editBookmark(bm, W.starRect, created);
 }
 
 function editBookmark(bm, rect, created = false) {
@@ -812,16 +1426,15 @@ function editBookmark(bm, rect, created = false) {
 
 function toggleDownloads(rect) {
   if (W.overlay.isOpen('downloads')) return W.overlay.close();
-  const r = rect || lastDownloadsRect;
+  const r = rect || W.downloadsRect;
   if (!r) return;
-  lastDownloadsRect = r;
+  W.downloadsRect = r;
   const sum = downloads.summary();
   const n = Math.min(Math.max(sum.items.length, 1), 6);
   const width = 360 + 2 * M;
   const height = (sum.items.length ? 50 + n * 58 + 8 : 150) + 2 * M;
   W.overlay.open('downloads', { x: r.x + r.width - width + M + 4, y: r.y + r.height + 4 - M, width, height }, sum, { focus: true });
 }
-let lastDownloadsRect = null;
 
 function showSuggest({ rect, items, selected }) {
   if (!items || !items.length) return W.overlay.isOpen('suggest') && W.overlay.close();
@@ -852,7 +1465,7 @@ function setAdblockException(site, allow) {
   s.adblockExceptions = list.sort();
   adblock.setExceptions(s.adblockExceptions);
   data.settings.save();
-  emit('settings', publicSettings());
+  eachWindow(() => emit('settings', publicSettings()));
   broadcastSettings();
   return true;
 }
@@ -951,9 +1564,14 @@ async function defaultBrowserStatus() {
 /** Re-check after the user changes the default in Windows, then tell any open Settings tab. */
 async function refreshDefaultBrowser() {
   const st = await defaultBrowserStatus();
-  for (const t of W.tabs.tabs) {
+  for (const t of allTabs()) {
     if (t.wc && t.url.startsWith('coffee://settings')) t.wc.send('ev:browser', st);
   }
+}
+
+/** Every tab in every open window. */
+function allTabs() {
+  return winStates.flatMap((s) => (s.tabs ? s.tabs.tabs : []));
 }
 
 /** Windows doesn't let apps set themselves as default; open the page where the user picks Coffee. */
@@ -977,12 +1595,16 @@ async function startExtensions() {
   await mod.init({
     ses: webSession,
     uiSession: session.defaultSession,
+    // Extensions act on whichever window is current (the focused one).
     win: () => W.win,
-    tabs: W.tabs,
+    tabs: () => W.tabs,
+    windows: () => winStates.filter((s) => s.tabs && s.win && !s.win.isDestroyed()),
+    findTab: (wc) => { const f = findTab(wc); return f ? f.tab : null; },
+    newWindow: (url) => (multiWindow() ? openNewWindow(url) : null),
     confirmInstall: confirmExtensionInstall,
   });
   ext = mod;
-  emit('settings', publicSettings());
+  eachWindow(() => emit('settings', publicSettings()));
 }
 
 /** Ask before an extension is installed, listing what it may access. */
@@ -1012,14 +1634,13 @@ function confirmExtensionInstall(details) {
 }
 
 function showExtensionsPanel(rect) {
-  if (rect) lastExtRect = rect;
-  const r = lastExtRect || { x: W.win.getContentSize()[0] - 200, y: 8, width: 32, height: 32 };
+  if (rect) W.extRect = rect;
+  const r = W.extRect || { x: W.win.getContentSize()[0] - 200, y: 8, width: 32, height: 32 };
   const list = ext ? ext.list() : [];
   const width = 320 + 2 * M;
   const height = 50 + Math.max(1, Math.min(list.length, 7)) * 52 + 54 + 2 * M;
   W.overlay.open('extensions', { x: r.x + r.width - width + M + 4, y: r.y + r.height + 4 - M, width, height }, { list }, { focus: true });
 }
-let lastExtRect = null;
 
 // ---------------------------------------------------------------------------
 // Sessions: the normal profile and private browsing
@@ -1040,13 +1661,19 @@ function prepareSession(ses, { private: priv = false } = {}) {
 
 function attachDownloads(ses, opts = {}) {
   downloads.attach(ses, () => data.settings.data.downloadDir, (sum) => {
-    emit('downloads', { ...sum, items: undefined });
-    W.overlay.update('downloads', sum);
+    // Downloads are shared: every window's button and panel show progress.
+    eachWindow(() => {
+      emit('downloads', { ...sum, items: undefined });
+      W.overlay.update('downloads', sum);
+    });
   }, (entry, wc) => {
-    emit('downloads:started', { filename: entry.filename });
-    // A tab opened only to start a download is useless afterwards.
-    const tab = wc && W.tabs.byWebContents(wc);
-    if (tab && !wc.getURL() && W.tabs.tabs.length > 1) W.tabs.close(tab.id);
+    const found = findTab(wc);
+    inWindow(found ? found.state : W, () => {
+      emit('downloads:started', { filename: entry.filename });
+      // A tab opened only to start a download is useless afterwards.
+      const tab = found && found.tab;
+      if (tab && !wc.getURL() && W.tabs.tabs.length > 1) W.tabs.close(tab.id);
+    });
   }, opts);
 }
 
@@ -1102,8 +1729,9 @@ function setupPermissions(ses, { private: priv = false } = {}) {
     const key = `${origin}|${permission}`;
     if (key in decisions()) return callback(decisions()[key]);
     const what = ASK[permission];
-    const tab = W.tabs.byWebContents(wc);
-    if (!what || !tab || tab !== W.tabs.active) return callback(false);
+    // Ask in the window that shows the tab; only a tab on screen may ask.
+    const found = findTab(wc);
+    if (!what || !found || !found.state.tabs.shown.has(found.tab.id)) return callback(false);
     let answered = false;
     const answer = (allow, remember) => {
       if (answered) return;
@@ -1112,10 +1740,12 @@ function setupPermissions(ses, { private: priv = false } = {}) {
       callback(allow);
     };
     const host = origin.replace(/^https?:\/\//, '');
-    const omni = lastOmniRect || { x: SIDEBAR_W + 120, y: 8, width: 400, height: 32 };
-    W.overlay.open('permission', { x: omni.x - M, y: omni.y + omni.height + 6 - M, width: 340 + 2 * M, height: 128 + 2 * M },
-      { host, what: permission === 'openExternal' && details.externalURL ? `open ${new URL(details.externalURL).protocol.replace(':', '')} links` : what },
-      { focus: true, onPick: (p) => answer(!!p.allow, true), onClose: () => answer(false, false) });
+    inWindow(found.state, () => {
+      const omni = W.omniRect || { x: SIDEBAR_W + 120, y: 8, width: 400, height: 32 };
+      W.overlay.open('permission', { x: omni.x - M, y: omni.y + omni.height + 6 - M, width: 340 + 2 * M, height: 128 + 2 * M },
+        { host, what: permission === 'openExternal' && details.externalURL ? `open ${new URL(details.externalURL).protocol.replace(':', '')} links` : what },
+        { focus: true, onPick: (p) => answer(!!p.allow, true), onClose: () => answer(false, false) });
+    });
   });
   ses.setPermissionCheckHandler((_wc, permission, requestingOrigin) => {
     if (AUTO_ALLOW.has(permission)) return true;
@@ -1123,7 +1753,6 @@ function setupPermissions(ses, { private: priv = false } = {}) {
     return v === true;
   });
 }
-let lastOmniRect = null;
 
 // ---------------------------------------------------------------------------
 // Settings changes from coffee://settings
@@ -1156,28 +1785,23 @@ function setSetting(key, value) {
       s.adblock = !!value;
       adblock.setEnabled(webSession, s.adblock, onBlocked);
       break;
+    // Layout changes are applied to every window by refreshWindows() below.
     case 'bookmarksBar':
       s.bookmarksBar = !!value;
-      layout();
       break;
     case 'bookmarksButton':
       s.bookmarksButton = !!value;
-      if (!s.bookmarksButton && W.overlay.isOpen('bmfolder')) W.overlay.close();
+      if (!s.bookmarksButton) eachWindow(() => { if (W.overlay.isOpen('bmfolder')) W.overlay.close(); });
       break;
     case 'tabLayout':
       s.tabLayout = value === 'horizontal' ? 'horizontal' : 'vertical';
-      layout();
-      updatePeekWatch();
       break;
     case 'compactSidebar':
       s.compactSidebar = !!value;
-      layout();
-      updatePeekWatch();
       break;
     case 'tabTitles':
       s.tabTitles = !!value;
-      layout();
-      if (W.overlay.isOpen('sidebar')) W.overlay.close();
+      eachWindow(() => { if (W.overlay.isOpen('sidebar')) W.overlay.close(); });
       break;
     case 'newtabShortcuts':
       s.newtabShortcuts = !!value;
@@ -1202,8 +1826,13 @@ function setSetting(key, value) {
     case 'restoreSession':
       s.restoreSession = !!value;
       break;
-    case 'experimental':
-      s.experimental = !!value;
+    case 'multiWindow':
+      s.multiWindow = !!value; // windows already open stay open
+      break;
+    case 'splitView':
+      s.splitView = !!value;
+      // Off: every window goes back to one tab at a time.
+      if (!s.splitView) eachWindow(() => W.tabs.unsplit());
       break;
     case 'theme': {
       const v = value || {};
@@ -1219,7 +1848,7 @@ function setSetting(key, value) {
       return;
   }
   data.settings.save();
-  emit('settings', publicSettings());
+  refreshWindows();
   broadcastSettings();
 }
 
@@ -1243,7 +1872,8 @@ function settingsPayload() {
     hiddenShortcuts: (s.hiddenShortcuts || []).length,
     sleepMinutes: s.sleepMinutes,
     restoreSession: s.restoreSession,
-    experimental: !!s.experimental,
+    multiWindow: !!s.multiWindow,
+    splitView: !!s.splitView,
     theme: { preset: s.theme.preset, custom: s.theme.custom, saved: themes.sanitizeSaved(s.theme.saved) },
     presets: themes.PRESETS,
     downloadDir: s.downloadDir,
@@ -1255,8 +1885,9 @@ function settingsPayload() {
   };
 }
 
+/** Tell every open Settings page (in any window) about a change. */
 function broadcastSettings() {
-  for (const t of W.tabs.tabs) {
+  for (const t of allTabs()) {
     if (t.wc && t.url.startsWith('coffee://settings')) t.wc.send('ev:settings', settingsPayload());
   }
 }
@@ -1270,9 +1901,9 @@ function onBlocked(wcId) {
   const s = data.settings.data;
   s.blockedTotal += 1;
   if (!blockedSaveTimer) blockedSaveTimer = setTimeout(() => { blockedSaveTimer = null; data.settings.save(); }, 5000);
-  if (!W.tabs || !wcId) return;
-  const tab = W.tabs.tabs.find((t) => t.wc && t.wc.id === wcId);
-  if (tab) { tab.blocked += 1; W.tabs.changed(); }
+  if (!wcId) return;
+  const tab = allTabs().find((t) => t.wc && t.wc.id === wcId);
+  if (tab) { tab.blocked += 1; tab.mgr.changed(); }
 }
 
 // ---------------------------------------------------------------------------
@@ -1303,6 +1934,11 @@ ipcMain.on('theme:sync', (e) => {
 });
 
 ipcMain.on('cmd', (e, type, p = {}) => {
+  // The tab drag card asks for a step every frame it draws; it may send nothing else.
+  if (type === 'drag:frame') {
+    if (tabDrag && !tabDrag.ghost.isDestroyed() && e.sender === tabDrag.ghost.webContents) dragTick();
+    return;
+  }
   const kind = senderKind(e);
   if (!kind || (kind === 'internal' && !INTERNAL_SEND.has(type))) return;
   inWindow(ownerOf(e), () => runCommand(e, kind, type, p));
@@ -1316,13 +1952,32 @@ function runCommand(e, kind, type, p) {
     case 'tab:close': W.tabs.close(p.id); break;
     case 'tab:activate': W.tabs.activate(p.id); break;
     case 'tab:move': W.tabs.move(p.id, p.index); break;
-    case 'tab:drop': dropTab(W, p.id, { x: Number(p.x) || 0, y: Number(p.y) || 0 }); break;
-    case 'tab:split': if (data.settings.data.experimental) W.tabs.split(p.id); break;
+    case 'tab:drag': dragTab(W, p.id, String(p.phase || ''), { strip: p.strip, kind }); break;
+    case 'tab:split': if (splitOn()) W.tabs.split(p.id); break;
     case 'split:unsplit': W.tabs.unsplit(); break;
     case 'split:swap': W.tabs.swapPanes(); break;
+    case 'split:drag': {
+      // Dragging the divider: a transparent overlay covers both tabs so the
+      // pointer keeps reporting to us while it's over either page.
+      if (!W.tabs.pane) break;
+      const { bounds } = pageBounds();
+      W.overlay.open('splitdrag', bounds, { width: bounds.width, gap: SPLIT_GAP });
+      break;
+    }
+    case 'split:resize':
+      W.tabs.setSplitRatio(Number(p.ratio));
+      if (p.done && W.overlay.isOpen('splitdrag')) W.overlay.close();
+      break;
+    case 'pip:toggle': toggleVideoPopout(W.tabs.active); break;
     case 'tab:menu': tabMenu(p.id, p.x, p.y); break;
     case 'sidebar:menu': sidebarMenu(p.x, p.y); break;
-    case 'update:install': updater.install(); break;
+    case 'nav:history-menu': historyMenu(p.dir < 0 ? -1 : 1, Number(p.x) || 0, Number(p.y) || 0); break;
+    case 'tab:drop-index': if (tabDrag && tabDrag.target === W) tabDrag.targetIndex = Number.isFinite(p.index) ? p.index : null; break;
+    case 'update:install':
+      // Installing quits the app: keep every window in the saved session.
+      if (updater.status.state === 'ready') { saveAllSessions(); quitting = true; }
+      updater.install();
+      break;
     case 'update:check': updater.check(); break;
     case 'tab:mute': {
       const t = W.tabs.get(p.id);
@@ -1356,8 +2011,8 @@ function runCommand(e, kind, type, p) {
     case 'win:close': W.win.close(); break;
 
     // overlay
-    case 'suggest:show': lastOmniRect = p.rect; showSuggest(p); break;
-    case 'omni:rect': lastOmniRect = p.rect; break;
+    case 'suggest:show': W.omniRect = p.rect; showSuggest(p); break;
+    case 'omni:rect': W.omniRect = p.rect; break;
     case 'overlay:close': if (!p.type || W.overlay.isOpen(p.type)) W.overlay.close(); break;
     case 'overlay:pick': if (kind === 'overlay') W.overlay.pick(p); break;
 
@@ -1410,23 +2065,7 @@ function runCommand(e, kind, type, p) {
     case 'bmfolder:nav': openFolder(p.id); break;
     case 'bmfolder:openall': openAll(data.children(p.id === BM_ROOT ? null : p.id).filter((b) => b.type === 'bookmark')); W.overlay.close(); break;
     case 'shield:menu': shieldMenu(p.rect); break;
-    case 'app:menu': showMenu(p.x, p.y, [
-      { label: 'New tab', accel: 'Ctrl+T', action: () => W.tabs.create() },
-      ...(data.settings.data.experimental ? [{ label: 'New window', accel: 'Ctrl+N', action: () => openNewWindow() }] : []),
-    { label: 'New private tab', accel: 'Ctrl+Shift+N', action: () => W.tabs.create({ private: true }) },
-      { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', disabled: !W.tabs.closed.length, action: () => W.tabs.reopenClosed() },
-      { sep: true },
-      { label: 'History', accel: 'Ctrl+H', action: openHistory },
-      { label: 'Downloads', accel: 'Ctrl+J', action: () => toggleDownloads() },
-      { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: data.settings.data.bookmarksBar, action: toggleBookmarksBar },
-      { label: tabsOnTop() ? 'Move tabs to the side' : 'Move tabs to the top', action: toggleTabLayout },
-      { label: 'Compact sidebar', checked: compactSidebar(), disabled: tabsOnTop(), action: toggleCompact },
-      { label: 'Find in page', accel: 'Ctrl+F', action: () => openFind() },
-      { label: 'Full screen', accel: 'F11', checked: W.win.isFullScreen(), action: () => W.win.setFullScreen(!W.win.isFullScreen()) },
-      { sep: true },
-      { label: 'Extensions', action: () => (ext ? showExtensionsPanel() : openSettings('extensions')) },
-      { label: 'Settings', accel: 'Ctrl+,', action: () => openSettings() },
-    ]); break;
+    case 'app:menu': appMenu(p.x, p.y); break;
     case 'find': {
       const wc = activeWc();
       const tab = W.tabs.active;
@@ -1446,6 +2085,7 @@ function runCommand(e, kind, type, p) {
     case 'app:relaunch':
       // Applies settings that need a restart (e.g. extensions).
       saveAllSessions();
+      quitting = true;
       data.Store.flushAll();
       app.relaunch();
       app.quit();
@@ -1493,6 +2133,7 @@ async function runInvoke(e, type, p) {
         bookmarks: data.bookmarks.data,
         downloads: { ...downloads.summary(), items: undefined },
         window: windowState(),
+        popout: pipKept.size > 0,
       };
     case 'suggest': return data.suggest(p.q, { inline: p.inline !== false });
     case 'newtab:data':
@@ -1564,30 +2205,49 @@ function urlsFromArgv(argv) {
 
 /**
  * Save every open window. The first window keeps the `tabs` key that older
- * builds read; any other windows go under `windows`.
+ * builds read; any other windows go under `windows`, with their position.
  */
 function saveAllSessions() {
-  const [first, ...rest] = winStates.filter((s) => s.tabs);
+  const [first, ...rest] = winStates.filter((s) => s.tabs && s.win && !s.win.isDestroyed());
   if (!first) return;
   const main = first.tabs.sessionData();
-  const others = rest.map((s) => s.tabs.sessionData()).filter((d) => d.tabs.length);
+  const others = rest.map((s) => ({
+    ...s.tabs.sessionData(),
+    bounds: s.win.getNormalBounds(),
+    maximized: s.win.isMaximized(),
+  })).filter((d) => d.tabs.length);
   data.session.data = { ...data.session.data, tabs: main.tabs, active: main.active, windows: others };
   data.session.save();
 }
 
+/** Leave HTML fullscreen (a fullscreen video) before a tab changes windows. */
+function dropFullscreen(state, tab) {
+  if (state.fullscreenTab !== tab) return;
+  state.fullscreenTab = null;
+  tab.htmlFullscreen = false;
+  if (tab.wc) tab.wc.executeJavaScript('document.fullscreenElement && document.exitFullscreen()').catch(() => {});
+  if (state.win && !state.win.isDestroyed()) {
+    state.win.setFullScreen(false);
+    inWindow(state, () => { updatePeekWatch(); emit('window', windowState()); });
+  }
+}
+
 /**
  * Move a tab to another open window, keeping its page (video, form input, login)
- * running. Private tabs stay in their window. Returns true if it moved.
+ * running. Returns true if it moved.
  */
 function moveTabToWindow(fromState, tabId, toState, index) {
-  if (!data.settings.data.experimental) return false;
+  if (!multiWindow()) return false;
   if (!fromState || !toState || fromState === toState || !fromState.tabs || !toState.tabs) return false;
+  if (!toState.win || toState.win.isDestroyed()) return false;
   const tab = fromState.tabs.get(tabId);
-  if (!tab || tab.private) return false;
+  if (!tab) return false;
+  dropFullscreen(fromState, tab);
   const moved = inWindow(fromState, () => fromState.tabs.release(tabId));
   if (!moved) return false;
   inWindow(toState, () => {
     toState.tabs.adopt(moved, index);
+    if (toState.win.isMinimized()) toState.win.restore();
     toState.win.focus();
   });
   // A window with no tabs left closes itself; the last one stays open.
@@ -1595,58 +2255,327 @@ function moveTabToWindow(fromState, tabId, toState, index) {
   return true;
 }
 
-/** The window state whose frame contains a screen point, if any (other than `except`). */
-function windowAtPoint(point, except) {
-  return winStates.find((s) => {
-    if (s === except || !s.win || s.win.isDestroyed()) return false;
-    const b = s.win.getBounds();
-    return point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height;
-  }) || null;
-}
-
-/** A tab dropped from the strip: onto another window it moves there, off every window it opens a new one. */
-function dropTab(fromState, tabId, point) {
-  if (!data.settings.data.experimental || !fromState || !fromState.tabs) return false;
-  const target = windowAtPoint(point, fromState);
-  if (target) return moveTabToWindow(fromState, tabId, target, Infinity);
-  // Dropped outside every window: the tab gets its own window, unless it's the only tab in this one.
-  if (fromState.tabs.tabs.length <= 1) return false;
+/** Move a tab into a window of its own, placed at `bounds` (or cascaded from its window). */
+function moveTabToNewWindow(fromState, tabId, bounds) {
+  if (!multiWindow() || !fromState || !fromState.tabs) return false;
   const tab = fromState.tabs.get(tabId);
-  if (!tab || tab.private) return false;
-  const placed = { x: point.x - 120, y: point.y - 20 };
+  // The only tab in a window is already in a window of its own.
+  if (!tab || fromState.tabs.tabs.length < 2) return false;
+  dropFullscreen(fromState, tab);
+  const placed = bounds || cascadeFrom(fromState);
   const moved = inWindow(fromState, () => fromState.tabs.release(tabId));
   if (!moved) return false;
-  if (!openEmptyWindow()) return false;
-  inWindow(W, () => {
-    W.tabs.adopt(moved, 0);
-    W.win.setPosition(Math.round(placed.x), Math.round(placed.y));
+  const state = createWindow({ bounds: placed, maximized: bounds ? false : fromState.win.isMaximized() });
+  inWindow(state, () => state.tabs.adopt(moved, 0));
+  return true;
+}
+
+/**
+ * The window under a screen point. Overlapping windows: the one focused most
+ * recently wins, which is the one on top in nearly every case.
+ */
+function windowAtPoint(point) {
+  const hits = winStates.filter((s) => {
+    if (!s.win || s.win.isDestroyed() || !s.win.isVisible() || s.win.isMinimized()) return false;
+    const b = s.win.getBounds();
+    return point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height;
   });
+  hits.sort((a, b) => (b.lastFocus || 0) - (a.lastFocus || 0));
+  return hits[0] || null;
+}
+
+// ---------------------------------------------------------------------------
+/// Dragging a tab out of the tab strip (split view / multiple windows). Once
+// it leaves the strip, a card of the tab follows the pointer everywhere (over
+// the page, other windows, the desktop), and what would happen on release is
+// shown:
+//   - a half of its own page lights up: split view, with the tab on that side
+//   - another Coffee window lights up, its frame outlined, and a placeholder
+//     tab slides into its tab strip where the tab will land
+//   - outside every window, an outline of the new window appears where it
+//     will open (the only tab in a window shows where its window will go)
+// Everything is driven from here, by reading the pointer from the screen and
+// the mouse button from the window, so it doesn't depend on the page under
+// the pointer passing events along. The card asks for a step on every frame
+// it draws (drag:frame), so it moves at the screen's refresh rate; a timer
+// covers the time it's hidden.
+// ---------------------------------------------------------------------------
+
+const GHOST = { width: 292, height: 252, grabX: 30, grabY: 34 }; // where the pointer holds the card
+const STRIP_SLACK = 24; // px around the tab strip that still count as "in the strip"
+const WM_LBUTTONUP = 0x0202;
+let tabDrag = null; // { from, tabId, tab, ghost, hint, strip, out, zoneKey, target, targetIndex, timer }
+
+/** A floating, click-through window for the drag card or the drop highlight. */
+function dragWindow(mode) {
+  const w = new BrowserWindow({
+    width: mode === 'ghost' ? GHOST.width : 100,
+    height: mode === 'ghost' ? GHOST.height : 100,
+    show: false, frame: false, transparent: true, resizable: false, movable: false,
+    minimizable: false, maximizable: false, focusable: false, skipTaskbar: true,
+    hasShadow: false, alwaysOnTop: true, backgroundColor: '#00000000',
+    webPreferences: { preload: UI_PRELOAD, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
+  });
+  w.setIgnoreMouseEvents(true);
+  w.setAlwaysOnTop(true, mode === 'ghost' ? 'pop-up-menu' : 'floating');
+  lockDown(w.webContents);
+  // Messages sent before the page has loaded would be lost: keep the latest
+  // of each and replay them once it's ready.
+  w.pending = new Map([['theme', theme]]);
+  w.ready = false;
+  w.webContents.once('did-finish-load', () => {
+    w.ready = true;
+    for (const [ev, payload] of w.pending) w.webContents.send(`ev:${ev}`, payload);
+  });
+  w.webContents.loadFile(path.join(ROOT, 'ui', 'drag.html'), { query: { mode } });
+  return w;
+}
+
+function post(w, ev, payload) {
+  if (!w || w.isDestroyed()) return;
+  w.pending.set(ev, payload);
+  if (w.ready) w.webContents.send(`ev:${ev}`, payload);
+}
+
+/** The page area of a window, in screen coordinates. */
+function pageRectOnScreen(state) {
+  return inWindow(state, () => {
+    const c = state.win.getContentBounds();
+    const { bounds } = pageBounds();
+    return { x: c.x + bounds.x, y: c.y + bounds.y, width: bounds.width, height: bounds.height };
+  });
+}
+
+const inRect = (p, r, slack = 0) => !!r && p.x >= r.x - slack && p.x < r.x + r.width + slack && p.y >= r.y - slack && p.y < r.y + r.height + slack;
+
+/** Where a window opened (or moved) by dropping at `p` goes: its first tab under the pointer. */
+function windowRectAt(d, p) {
+  const b = d.from.win.getNormalBounds();
+  return { x: Math.round(p.x - 70), y: Math.round(p.y - 64), width: b.width, height: b.height };
+}
+
+const NOTHING = { kind: 'none', label: 'Drop here to cancel' };
+
+/** What dropping the dragged tab at screen point `p` would do. */
+function dragZone(d, p) {
+  const target = windowAtPoint(p);
+  if (multiWindow()) {
+    const alone = d.from.tabs.tabs.length < 2;
+    // A window's only tab can't leave it: anywhere but another window, the window goes along.
+    if (alone && (!target || target === d.from)) return { kind: 'place', label: 'Move this window here', rect: windowRectAt(d, p) };
+    if (!target) return { kind: 'new', label: 'New window', rect: windowRectAt(d, p) };
+    if (target !== d.from) return { kind: 'move', state: target, label: 'Move to this window', rect: pageRectOnScreen(target) };
+  }
+  if (target !== d.from || !splitOn()) return NOTHING;
+  const r = pageRectOnScreen(d.from);
+  if (!inRect(p, r)) return NOTHING; // back over its own window's frame
+  const side = p.x < r.x + r.width / 2 ? 'left' : 'right';
+  const partner = d.from.tabs.splitPartner(d.tabId, side);
+  if (!partner) return NOTHING;
+  const half = Math.floor(r.width / 2);
+  return {
+    kind: 'split', side, partner,
+    label: side === 'left' ? 'Open on the left' : 'Open on the right',
+    rect: side === 'left' ? { ...r, width: half } : { ...r, x: r.x + half, width: r.width - half },
+  };
+}
+
+// The new-window and move-window outlines follow the pointer, so they're keyed
+// by kind only; the rest by the place they light up.
+const zoneKey = (z) => `${z.kind}:${z.side || ''}:${z.state ? winStates.indexOf(z.state) : ''}`;
+
+/** Send to a window's frame and overlay (the compact peek panel's strip lives there). */
+function tellWindow(state, ev, payload) {
+  if (!state || !state.win || state.win.isDestroyed()) return;
+  inWindow(state, () => {
+    emit(ev, payload);
+    if (state.overlay && !state.overlay.wc.isDestroyed()) state.overlay.wc.send(`ev:${ev}`, payload);
+  });
+}
+
+/** The window the tab would move into: it lights up and makes room for the tab. */
+function setDragTarget(d, state) {
+  if (d.target === state) return;
+  if (d.target) tellWindow(d.target, 'drag:incoming', null);
+  d.target = state;
+  d.targetIndex = null;
+  if (state) tellWindow(state, 'drag:incoming', { id: d.tabId, title: d.card.title, favicon: d.card.favicon, private: d.card.private });
+}
+
+/** Follow the pointer: move the card, and show where the tab would land. */
+function dragTick() {
+  const d = tabDrag;
+  if (!d) return;
+  if (!d.from.win || d.from.win.isDestroyed()) { finishTabDrag(false); return; }
+  const p = screen.getCursorScreenPoint();
+  if (p.x === d.lx && p.y === d.ly) return; // nothing moved since the last step
+  d.lx = p.x;
+  d.ly = p.y;
+  const out = !inRect(p, d.strip, STRIP_SLACK);
+  if (out !== d.out) {
+    d.out = out;
+    tellWindow(d.from, 'drag:tear', { id: d.tabId, out });
+    if (!out) {
+      d.zoneKey = '';
+      setDragTarget(d, null);
+      d.ghost.hide();
+      d.hint.hide();
+      return;
+    }
+  }
+  if (!out) return;
+  d.ghost.setPosition(Math.round(p.x - GHOST.grabX), Math.round(p.y - GHOST.grabY));
+  if (!d.ghost.isVisible()) d.ghost.showInactive();
+  const zone = dragZone(d, p);
+  const key = zoneKey(zone);
+  const changed = key !== d.zoneKey;
+  d.zoneKey = key;
+  if (changed) {
+    post(d.ghost, 'drag:zone', { kind: zone.kind, label: zone.label });
+    setDragTarget(d, zone.kind === 'move' ? zone.state : null);
+  }
+  // The target window's tab strip follows the pointer to make room for the tab.
+  if (d.target) {
+    const c = d.target.win.getContentBounds();
+    inWindow(d.target, () => emit('drag:over', { x: p.x - c.x, y: p.y - c.y }));
+  }
+  if (!zone.rect) {
+    if (d.hint.isVisible()) d.hint.hide();
+    return;
+  }
+  if (changed) {
+    d.hint.setBounds(zone.rect);
+    post(d.hint, 'drag:hint', { label: zone.label, kind: zone.kind });
+    if (!d.hint.isVisible()) d.hint.showInactive();
+    d.ghost.moveTop(); // the card stays above the highlight
+  } else if (zone.kind === 'new' || zone.kind === 'place') {
+    d.hint.setPosition(zone.rect.x, zone.rect.y); // the window outline follows the pointer
+  }
+}
+
+/** The tab strip reports a drag: begin (with its own rect), end (released), cancel. */
+function dragTab(from, tabId, phase, info = {}) {
+  if (!canTear() || !from || !from.tabs) return;
+  if (phase === 'begin') return startTabDrag(from, tabId, info);
+  const d = tabDrag;
+  if (!d || d.from !== from || d.tabId !== tabId) return;
+  if (phase === 'end' || phase === 'cancel') finishTabDrag(phase === 'end');
+}
+
+function startTabDrag(from, tabId, info) {
+  finishTabDrag(false);
+  const tab = from.tabs.get(tabId);
+  if (!tab || !from.win || from.win.isDestroyed()) return;
+  // The strip's rect, on screen. The compact peek panel lives in the overlay.
+  const c = from.win.getContentBounds();
+  const r = info.strip || {};
+  const off = info.kind === 'overlay' ? from.overlay.view.getBounds() : { x: 0, y: 0 };
+  const strip = { x: c.x + off.x + (Number(r.x) || 0), y: c.y + off.y + (Number(r.y) || 0), width: Number(r.width) || 0, height: Number(r.height) || 0 };
+  const shown = tab.serialize();
+  const card = { title: shown.title, favicon: shown.favicon, private: tab.private, letter: (shown.url.replace(/^https?:\/\/(www\.)?/, '')[0] || '').toUpperCase() };
+  // Both windows are made now, hidden, so they're ready the moment the tab leaves the strip.
+  const d = { from, tabId, tab, card, strip, ghost: dragWindow('ghost'), hint: dragWindow('hint'), out: false, zoneKey: '', target: null, targetIndex: null, timer: null };
+  tabDrag = d;
+  post(d.ghost, 'drag:tab', card);
+  if (tab.wc && from.tabs.shown.has(tab.id)) {
+    tab.wc.capturePage().then((img) => {
+      if (tabDrag !== d || img.isEmpty()) return;
+      post(d.ghost, 'drag:thumb', img.resize({ width: 520, quality: 'good' }).toDataURL());
+    }).catch(() => {});
+  }
+  // The release, straight from the window: the page under the pointer may
+  // not pass it on to the tab strip.
+  if (process.platform === 'win32') {
+    from.win.hookWindowMessage(WM_LBUTTONUP, () => setImmediate(() => { if (tabDrag === d) finishTabDrag(true); }));
+  }
+  d.timer = setInterval(dragTick, 8);
+}
+
+/** End the drag; with `drop`, do what was shown for the place under the pointer. */
+function finishTabDrag(drop) {
+  const d = tabDrag;
+  if (!d) return;
+  tabDrag = null;
+  clearInterval(d.timer);
+  if (process.platform === 'win32' && d.from.win && !d.from.win.isDestroyed()) {
+    try { d.from.win.unhookWindowMessage(WM_LBUTTONUP); } catch { /* not hooked */ }
+  }
+  const p = screen.getCursorScreenPoint();
+  const zone = drop && d.out && d.from.win && !d.from.win.isDestroyed() ? dragZone(d, p) : null;
+  const act = !!zone && zone.kind !== 'none';
+  const index = d.targetIndex;
+  setDragTarget(d, null);
+  // The card and highlight settle into the drop (or fade on cancel), then go.
+  post(d.ghost, 'drag:end', { dropped: act });
+  post(d.hint, 'drag:end', { dropped: act });
+  setTimeout(() => { for (const w of [d.ghost, d.hint]) if (!w.isDestroyed()) w.destroy(); }, act ? 260 : 140);
+  if (d.out) tellWindow(d.from, 'drag:done', { id: d.tabId });
+  if (!act) return;
+  switch (zone.kind) {
+    case 'split': d.from.tabs.splitAt(d.tabId, zone.side, zone.partner); break;
+    case 'move': moveTabToWindow(d.from, d.tabId, zone.state, index ?? Infinity); break;
+    case 'new': moveTabToNewWindow(d.from, d.tabId, zone.rect); break;
+    case 'place': {
+      const w = d.from.win;
+      if (w.isFullScreen()) break;
+      if (w.isMaximized()) w.unmaximize();
+      w.setBounds(zone.rect);
+      w.focus();
+      break;
+    }
+    default:
+  }
+}
+
+/** Esc while dragging: put the tab back where it was. */
+function cancelTabDrag() {
+  const d = tabDrag;
+  if (!d) return false;
+  finishTabDrag(false);
+  tellWindow(d.from, 'drag:abort', { id: d.tabId });
   return true;
 }
 
-/** Open another Coffee window with its own tabs (experimental). */
+
+/** Bounds for a new window: offset from `state`'s window, kept on the same screen. */
+function cascadeFrom(state) {
+  if (!state || !state.win || state.win.isDestroyed()) return undefined;
+  const b = state.win.getNormalBounds();
+  const area = screen.getDisplayMatching(b).workArea;
+  let x = b.x + 32;
+  let y = b.y + 32;
+  if (x + Math.min(b.width, area.width) > area.x + area.width) x = area.x;
+  if (y + Math.min(b.height, area.height) > area.y + area.height) y = area.y;
+  return { x, y, width: Math.min(b.width, area.width), height: Math.min(b.height, area.height) };
+}
+
+/** Open another Coffee window with its own tabs (when multiple windows are on). Returns its state. */
 function openNewWindow(url) {
-  if (!openEmptyWindow()) return false;
-  W.tabs.create({ url: url || NEWTAB });
-  return true;
+  const state = openEmptyWindow();
+  if (!state) return null;
+  inWindow(state, () => state.tabs.create({ url: url || NEWTAB }));
+  return state;
 }
 
-/** A window with no tabs yet (used when restoring a session). */
-function openEmptyWindow() {
-  if (!data.settings.data.experimental) return false;
-  createWindow();
-  return true;
+/** A window with no tabs yet, cascaded from the current one. Returns its state. */
+function openEmptyWindow(opts) {
+  if (!multiWindow()) return null;
+  const from = W;
+  return createWindow(opts || { bounds: cascadeFrom(from), maximized: from.win && !from.win.isDestroyed() ? from.win.isMaximized() : undefined });
 }
 
 app.on('second-instance', (_e, argv) => {
   const urls = urlsFromArgv(argv);
-  // A second launch opens a new window when experimental multi-window is on;
-  // otherwise it reuses the one window, as before.
-  if (data.settings.data.experimental && winStates.length && urls.length) {
-    for (const u of urls) openNewWindow(u);
+  // Like Chrome: launching Coffee again opens a new window (with multiple
+  // windows on); opening a link from another app adds a tab to the
+  // window you used last.
+  if (multiWindow() && winStates.length && !urls.length) {
+    openNewWindow();
     return;
   }
-  if (!W.win) return;
+  // No window left (a popped-out video kept the app running): open one.
+  if (!winStates.length) { inWindow(createWindow(), () => { if (urls.length) for (const u of urls) W.tabs.create({ url: u }); else W.tabs.create(); }); return; }
+  if (!W.win || W.win.isDestroyed()) return;
   if (W.win.isMinimized()) W.win.restore();
   W.win.focus();
   for (const u of urls) W.tabs.create({ url: u });
@@ -1665,8 +2594,8 @@ app.whenReady().then(async () => {
     ? adblock.setEnabled(webSession, true, onBlocked)
     : Promise.resolve();
 
-  createWindow();
-  updater.init(() => { emit('settings', publicSettings()); broadcastSettings(); });
+  const first = createWindow();
+  updater.init(() => { eachWindow(() => emit('settings', publicSettings())); broadcastSettings(); });
 
   attachDownloads(webSession);
 
@@ -1679,39 +2608,53 @@ app.whenReady().then(async () => {
 
   const saved = data.session.data;
   const argvUrls = urlsFromArgv(process.argv);
-  if (data.settings.data.restoreSession && saved.tabs && saved.tabs.length) {
-    for (const t of saved.tabs) {
-      // The setup page is never restored; it opens fresh if setup isn't done.
-      if (String(t.url || '').startsWith('coffee://welcome')) continue;
-      W.tabs.create({ background: true, init: { url: t.url || NEWTAB, title: t.title, favicon: t.favicon, entries: t.entries, entryIndex: t.entryIndex } });
-    }
-    const target = W.tabs.tabs[Math.min(saved.active || 0, W.tabs.tabs.length - 1)];
-    if (target && !argvUrls.length) W.tabs.activate(target.id);
-  }
-  for (const u of argvUrls) W.tabs.create({ url: u });
-  if (!W.tabs.tabs.length && data.settings.data.onboarded) W.tabs.create();
-  // First run: open the welcome setup (theme, tabs, search engine...).
-  if (!data.settings.data.onboarded) W.tabs.create({ url: 'coffee://welcome/' });
-  else if (!W.tabs.active) W.tabs.activate(W.tabs.tabs[0].id);
-
-  // Other windows from the last session come back only with experimental on.
-  if (data.settings.data.experimental && data.settings.data.restoreSession && Array.isArray(saved.windows)) {
-    const first = W;
-    for (const w of saved.windows) {
-      if (!openEmptyWindow()) break;
-      for (const t of w.tabs || []) {
+  const restoreInit = (t) => ({ url: t.url || NEWTAB, title: t.title, favicon: t.favicon, entries: t.entries, entryIndex: t.entryIndex });
+  // The first window is filled by name: another window may have opened (and
+  // become current) during the wait above.
+  inWindow(first, () => {
+    if (data.settings.data.restoreSession && saved.tabs && saved.tabs.length) {
+      for (const t of saved.tabs) {
+        // The setup page is never restored; it opens fresh if setup isn't done.
         if (String(t.url || '').startsWith('coffee://welcome')) continue;
-        W.tabs.create({ background: true, init: { url: t.url || NEWTAB, title: t.title, favicon: t.favicon, entries: t.entries, entryIndex: t.entryIndex } });
+        W.tabs.create({ background: true, init: restoreInit(t) });
       }
-      const target = W.tabs.tabs[Math.min(w.active || 0, W.tabs.tabs.length - 1)];
-      if (target) W.tabs.activate(target.id);
+      const target = W.tabs.tabs[Math.min(saved.active || 0, W.tabs.tabs.length - 1)];
+      if (target && !argvUrls.length) W.tabs.activate(target.id);
+    }
+    for (const u of argvUrls) W.tabs.create({ url: u });
+    if (!W.tabs.tabs.length && data.settings.data.onboarded) W.tabs.create();
+    // First run: open the welcome setup (theme, tabs, search engine...).
+    if (!data.settings.data.onboarded) W.tabs.create({ url: 'coffee://welcome/' });
+    else if (!W.tabs.active) W.tabs.activate(W.tabs.tabs[0].id);
+  });
+
+  // Other windows from the last session come back only with multiple windows on.
+  if (multiWindow() && data.settings.data.restoreSession && Array.isArray(saved.windows)) {
+    for (const w of saved.windows) {
+      const tabs = (w.tabs || []).filter((t) => !String(t.url || '').startsWith('coffee://welcome'));
+      if (!tabs.length) continue;
+      // Opened behind the main window, which keeps the focus.
+      const state = openEmptyWindow({ ...(w.bounds ? { bounds: w.bounds, maximized: !!w.maximized } : { bounds: cascadeFrom(first) }), inactive: true });
+      if (!state) break;
+      inWindow(state, () => {
+        for (const t of tabs) W.tabs.create({ background: true, init: restoreInit(t) });
+        const target = W.tabs.tabs[Math.min(w.active || 0, W.tabs.tabs.length - 1)];
+        if (target) W.tabs.activate(target.id);
+      });
     }
     W = first;
   }
 });
 
-app.on('window-all-closed', () => { if (!winStates.length) app.quit(); });
-app.on('before-quit', () => data.Store.flushAll());
+// A popped-out video keeps the app running after its last window closes, until the video is closed.
+app.on('window-all-closed', () => { if (!winStates.length && !pipKept.size) app.quit(); });
+app.on('before-quit', () => {
+  // Save every window now: they close one at a time while quitting, and each
+  // close would otherwise save a session missing the windows closed before it.
+  if (!quitting) saveAllSessions();
+  quitting = true;
+  data.Store.flushAll();
+});
 app.on('will-quit', () => data.Store.flushAll());
 
 // Links in internal pages that point outside the browser (mailto:, etc.).

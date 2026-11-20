@@ -20,15 +20,19 @@
   }
 
   // ---------- menu ----------
-  function renderMenu(data) {
-    const p = panel('menu');
+  function renderMenu(data, reopen) {
+    // Reopened in place (e.g. after a zoom step): no slide-in again.
+    const p = panel('menu', reopen);
     let sel = -1;
     const rows = [];
     data.items.forEach((it, i) => {
       if (it.sep) { p.insertAdjacentHTML('beforeend', '<div class="msep"></div>'); return; }
+      if (it.zoom) { p.appendChild(zoomRow(it, i)); return; }
       const r = document.createElement('div');
-      r.className = `mi${it.disabled ? ' disabled' : ''}`;
-      r.innerHTML = `<span class="check">${it.checked ? Icons.check : ''}</span><span class="label">${esc(it.label)}</span>${it.accel ? `<span class="accel">${esc(it.accel)}</span>` : ''}`;
+      r.className = `mi${it.disabled ? ' disabled' : ''}${it.checked ? ' checked' : ''}`;
+      // A tick for on/off items, otherwise the item's icon.
+      const lead = it.checked ? Icons.check : (it.icon && Icons[it.icon]) || '';
+      r.innerHTML = `<span class="check">${lead}</span><span class="label">${esc(it.label)}</span>${it.accel ? `<span class="accel">${esc(it.accel)}</span>` : ''}`;
       r.addEventListener('mouseenter', () => setSel(rows.indexOf(entry)));
       r.addEventListener('mouseup', (e) => { if (e.button !== 1 && !it.disabled) pick({ index: i }); });
       const entry = { r, i, it };
@@ -55,6 +59,27 @@
         pick({ index: rows[sel].i });
       }
     };
+  }
+
+  /** "Zoom  − 100% +  ⛶": the steps keep the menu open; full screen closes it. */
+  function zoomRow(it, i) {
+    const r = document.createElement('div');
+    r.className = 'mi mzoom';
+    r.innerHTML = `<span class="check">${Icons.zoom}</span><span class="label">Zoom</span>
+      <button class="zb" data-a="out" title="Zoom out (Ctrl+-)">${Icons.minus}</button>
+      <button class="zv" data-a="reset" title="Reset to 100% (Ctrl+0)">${esc(it.zoom.value)}%</button>
+      <button class="zb" data-a="in" title="Zoom in (Ctrl++)">${Icons.plus}</button>
+      <span class="zsep"></span>
+      <button class="zb" data-a="fullscreen" title="Full screen (F11)">${it.zoom.fullscreen ? Icons.restore : Icons.fullscreen}</button>`;
+    for (const b of r.querySelectorAll('button')) {
+      b.addEventListener('mouseup', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        const action = b.dataset.a;
+        pick({ index: i, action, keepOpen: action !== 'fullscreen' });
+      });
+    }
+    return r;
   }
 
   // ---------- omnibox suggestions ----------
@@ -350,7 +375,7 @@
     // Activate on click (not pointerdown) so tabs can still be dragged here.
     const titles = data.titles !== false;
     p.classList.toggle('peek-icons', !titles);
-    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles, activateOn: 'click' });
+    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles, activateOn: 'click', canTear: !!data.canTear });
     peekStrip.render(data);
     p.querySelector('.peek-new').onclick = () => api.send('tab:new');
     p.querySelector('.peek-settings').onclick = () => api.send('settings:open');
@@ -367,7 +392,35 @@
     p.addEventListener('mouseenter', () => clearTimeout(peekLeave));
   }
 
+  // ---------- split view divider drag ----------
+  // Covers both tabs while the divider is dragged, so pointer moves over the
+  // pages still reach us. Main closes it once the drag is done.
+  function renderSplitDrag(data) {
+    root.textContent = '';
+    const sheet = document.createElement('div');
+    sheet.className = 'splitdrag';
+    root.appendChild(sheet);
+    let raf = 0;
+    let done = false;
+    const ratio = (x) => (x - data.gap / 2) / Math.max(1, data.width - data.gap);
+    const finish = (e) => {
+      if (done) return;
+      done = true;
+      cancelAnimationFrame(raf);
+      api.send('split:resize', { ratio: ratio(e.clientX), done: true });
+    };
+    sheet.addEventListener('pointermove', (e) => {
+      if (!(e.buttons & 1)) { finish(e); return; } // the button was released somewhere else
+      const r = ratio(e.clientX);
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => api.send('split:resize', { ratio: r }));
+    });
+    sheet.addEventListener('pointerup', finish);
+    sheet.addEventListener('pointerdown', finish);
+  }
+
   const renderers = {
+    splitdrag: renderSplitDrag,
     sidebar: renderSidebar,
     bmfolder: renderFolder,
     folder: renderFolderEditor,
