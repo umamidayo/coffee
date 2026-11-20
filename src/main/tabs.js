@@ -299,8 +299,10 @@ class TabManager {
   activate(id) {
     const tab = this.get(id);
     if (!tab) return;
+    // Picking the tab already on the right of a split swaps the panes instead.
+    if (this.pane === id) { this.swapPanes(); return; }
     const prev = this.active;
-    if (prev && prev !== tab && prev.view) {
+    if (prev && prev !== tab && prev.view && prev.id !== this.pane) {
       if (prev.find) { prev.wc && prev.wc.stopFindInPage('clearSelection'); prev.find = null; }
       this.win.contentView.removeChildView(prev.view);
     }
@@ -310,6 +312,41 @@ class TabManager {
     this.win.contentView.addChildView(view);
     this.hooks.layout();
     this.hooks.activated(tab);
+    this.changed();
+  }
+
+  /** Show `id` beside the active tab (experimental split view). */
+  split(id) {
+    const tab = this.get(id);
+    if (!tab || !this.active || tab.id === this.activeId) return false;
+    if (this.pane && this.pane !== id) this.unsplit();
+    const view = tab.ensureView();
+    this.win.contentView.addChildView(view);
+    this.pane = id;
+    this.hooks.layout();
+    this.changed();
+    return true;
+  }
+
+  /** Back to one tab. The pane tab is kept open, just not shown beside the active one. */
+  unsplit() {
+    const pane = this.get(this.pane);
+    this.pane = null;
+    if (pane && pane.view && pane.id !== this.activeId) {
+      try { this.win.contentView.removeChildView(pane.view); } catch { /* not attached */ }
+    }
+    this.hooks.layout();
+    this.changed();
+  }
+
+  /** Swap which tab is on the left and which is on the right. */
+  swapPanes() {
+    if (!this.pane) return;
+    const next = this.pane;
+    this.pane = this.activeId;
+    this.activeId = next;
+    this.hooks.layout();
+    this.hooks.activated(this.active);
     this.changed();
   }
 
@@ -329,6 +366,8 @@ class TabManager {
       if (this.closed.length > 25) this.closed.shift();
     }
     const wasActive = tab.id === this.activeId;
+    // Closing the right pane ends the split; closing the left one leaves the pane as the only tab.
+    if (this.pane === id) this.pane = null;
     this.tabs.splice(i, 1);
     tab.destroyView();
     if (tab.private && !this.tabs.some((t) => t.private)) this.hooks.privateEnded();
@@ -340,8 +379,10 @@ class TabManager {
     if (wasActive) {
       // Prefer returning to the opener, then the tab to the right, like Chrome.
       const opener = tab.openerId && this.get(tab.openerId);
-      const next = opener || this.tabs[Math.min(i, this.tabs.length - 1)];
+      const pane = this.pane && this.get(this.pane);
+      const next = pane || opener || this.tabs[Math.min(i, this.tabs.length - 1)];
       this.activeId = null;
+      if (pane) this.pane = null;
       this.activate(next.id);
     } else {
       this.changed();
@@ -375,7 +416,7 @@ class TabManager {
     if (!mins) return;
     const cutoff = Date.now() - mins * 60 * 1000;
     for (const t of this.tabs) {
-      if (t.id === this.activeId || !t.wc || t.audible || t.lastActive > cutoff) continue;
+      if (t.id === this.activeId || t.id === this.pane || !t.wc || t.audible || t.lastActive > cutoff) continue;
       if (t.wc.isCurrentlyAudible() || t.wc.isDevToolsOpened()) continue;
       t.sleep();
     }
@@ -394,7 +435,7 @@ class TabManager {
   }
 
   snapshot() {
-    return { tabs: this.tabs.map((t) => t.serialize()), activeId: this.activeId };
+    return { tabs: this.tabs.map((t) => t.serialize()), activeId: this.activeId, paneId: this.pane || null };
   }
 
   saveSession() {
@@ -431,6 +472,41 @@ class TabManager {
   destroy() {
     clearInterval(this.sleepTimer);
     for (const t of this.tabs) t.destroyView();
+  }
+
+  /**
+   * Take a tab out of this window without destroying its page (for a move to
+   * another window). The view is detached here; the caller attaches it elsewhere.
+   */
+  release(id) {
+    const i = this.tabs.findIndex((t) => t.id === id);
+    if (i < 0) return null;
+    const tab = this.tabs[i];
+    this.tabs.splice(i, 1);
+    if (tab.view && this.win && !this.win.isDestroyed()) {
+      try { this.win.contentView.removeChildView(tab.view); } catch { /* not attached */ }
+    }
+    if (this.pane === id) this.pane = null;
+    const wasActive = this.activeId === id;
+    if (wasActive) tab.find = null;
+    if (this.hooks.viewDestroyed) this.hooks.viewDestroyed(tab);
+    if (wasActive) {
+      this.activeId = null;
+      if (this.tabs.length) this.activate(this.tabs[Math.min(i, this.tabs.length - 1)].id);
+      else this.hooks.render({ tabs: [], activeId: null });
+    } else {
+      this.changed();
+    }
+    return tab;
+  }
+
+  /** Put a tab that came from another window into this one, keeping its page alive. */
+  adopt(tab, index = this.tabs.length) {
+    tab.mgr = this;
+    this.tabs.splice(Math.max(0, Math.min(index, this.tabs.length)), 0, tab);
+    if (tab.view && this.hooks.viewCreated) this.hooks.viewCreated(tab);
+    if (tab.view) tab.view.setBorderRadius(this.radius());
+    this.activate(tab.id);
   }
 }
 

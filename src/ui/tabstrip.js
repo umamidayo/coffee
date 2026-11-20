@@ -89,6 +89,7 @@
         if (img) img.onerror = () => { n._icon.innerHTML = `<span class="letter">${letterFor(t)}</span>`; };
       }
       n.classList.toggle('active', t.id === this.activeId);
+      n.classList.toggle('pane', t.id === this.paneId);
       n.classList.toggle('loading', t.loading && !t.newtab);
       n.classList.toggle('sleeping', t.sleeping && t.id !== this.activeId);
       n.classList.toggle('audible', t.audible && !t.muted);
@@ -120,6 +121,7 @@
     render(snap) {
       this.tabs = snap.tabs;
       this.activeId = snap.activeId;
+      this.paneId = snap.paneId || null;
       if (this.drag && this.drag.active) { this.pendingRender = true; return; }
       const ids = new Set(this.tabs.map((t) => t.id));
       this.flip(() => {
@@ -216,6 +218,10 @@
     dragMove(e) {
       const d = this.drag;
       if (!d) return;
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      d.screenX = e.screenX;
+      d.screenY = e.screenY;
       if (!d.active) {
         if (Math.abs(this.client(e) - d.startPos) < 5) return;
         d.active = true;
@@ -252,6 +258,15 @@
       d.node.classList.remove('dragging');
       this.root.classList.remove('drag-active');
       setTimeout(() => { d.node.style.transition = ''; }, 300);
+      // Dropped outside this strip: hand the tab to main (another window, or a new one).
+      const r = this.root.getBoundingClientRect();
+      const inside = d.lastX >= r.left && d.lastX <= r.right && d.lastY >= r.top && d.lastY <= r.bottom;
+      if (!inside && d.screenX !== undefined) {
+        this.api.send('tab:drop', { id: d.id, x: d.screenX, y: d.screenY });
+        if (this.pendingRender) { this.pendingRender = false; this.render({ tabs: this.tabs, activeId: this.activeId }); }
+        this.moveHighlight();
+        return;
+      }
       // Reflect locally right away; main confirms with a fresh snapshot.
       const t = this.tabs.find((x) => x.id === d.id);
       this.tabs = this.tabs.filter((x) => x.id !== d.id);

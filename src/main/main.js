@@ -200,10 +200,22 @@ function showPeek() {
 function toggleTabLayout() { setSetting('tabLayout', tabsOnTop() ? 'vertical' : 'horizontal'); }
 function toggleCompact() { setSetting('compactSidebar', !data.settings.data.compactSidebar); }
 
+const SPLIT_GAP = 6;
+
 function layout() {
   const tab = W.tabs && W.tabs.active;
   if (!tab || !tab.view) return;
   const { bounds, radius } = pageBounds();
+  const pane = W.tabs.pane && W.tabs.get(W.tabs.pane);
+  if (pane && pane.view && !htmlFullscreenTab) {
+    // Two tabs side by side: each gets half of the page area, with a gap between.
+    const half = Math.floor((bounds.width - SPLIT_GAP) / 2);
+    tab.view.setBounds({ ...bounds, width: half });
+    pane.view.setBounds({ ...bounds, x: bounds.x + half + SPLIT_GAP, width: bounds.width - half - SPLIT_GAP });
+    tab.view.setBorderRadius(radius);
+    pane.view.setBorderRadius(radius);
+    return;
+  }
   tab.view.setBounds(bounds);
   tab.view.setBorderRadius(radius);
 }
@@ -641,6 +653,10 @@ function tabMenu(id, x, y) {
     { label: 'Copy link', disabled: !shown, action: () => clipboard.writeText(shown) },
     { label: 'Put to sleep', disabled: tab.id === W.tabs.activeId || !tab.wc, action: () => tab.sleep() },
     { sep: true },
+    ...(data.settings.data.experimental ? [
+      { label: 'Open beside', disabled: tab.id === W.tabs.activeId || !W.tabs.active, action: () => W.tabs.split(tab.id) },
+      ...(W.tabs.pane ? [{ label: 'Show one tab', action: () => W.tabs.unsplit() }] : []),
+    ] : []),
     { label: 'Close tab', accel: 'Ctrl+W', action: () => W.tabs.close(tab.id) },
     { label: 'Close other tabs', disabled: W.tabs.tabs.length < 2, action: () => {
       for (const t of [...W.tabs.tabs]) if (t !== tab) W.tabs.close(t.id);
@@ -1300,6 +1316,10 @@ function runCommand(e, kind, type, p) {
     case 'tab:close': W.tabs.close(p.id); break;
     case 'tab:activate': W.tabs.activate(p.id); break;
     case 'tab:move': W.tabs.move(p.id, p.index); break;
+    case 'tab:drop': dropTab(W, p.id, { x: Number(p.x) || 0, y: Number(p.y) || 0 }); break;
+    case 'tab:split': if (data.settings.data.experimental) W.tabs.split(p.id); break;
+    case 'split:unsplit': W.tabs.unsplit(); break;
+    case 'split:swap': W.tabs.swapPanes(); break;
     case 'tab:menu': tabMenu(p.id, p.x, p.y); break;
     case 'sidebar:menu': sidebarMenu(p.x, p.y); break;
     case 'update:install': updater.install(); break;
@@ -1553,6 +1573,55 @@ function saveAllSessions() {
   const others = rest.map((s) => s.tabs.sessionData()).filter((d) => d.tabs.length);
   data.session.data = { ...data.session.data, tabs: main.tabs, active: main.active, windows: others };
   data.session.save();
+}
+
+/**
+ * Move a tab to another open window, keeping its page (video, form input, login)
+ * running. Private tabs stay in their window. Returns true if it moved.
+ */
+function moveTabToWindow(fromState, tabId, toState, index) {
+  if (!data.settings.data.experimental) return false;
+  if (!fromState || !toState || fromState === toState || !fromState.tabs || !toState.tabs) return false;
+  const tab = fromState.tabs.get(tabId);
+  if (!tab || tab.private) return false;
+  const moved = inWindow(fromState, () => fromState.tabs.release(tabId));
+  if (!moved) return false;
+  inWindow(toState, () => {
+    toState.tabs.adopt(moved, index);
+    toState.win.focus();
+  });
+  // A window with no tabs left closes itself; the last one stays open.
+  if (!fromState.tabs.tabs.length && winStates.length > 1) fromState.win.close();
+  return true;
+}
+
+/** The window state whose frame contains a screen point, if any (other than `except`). */
+function windowAtPoint(point, except) {
+  return winStates.find((s) => {
+    if (s === except || !s.win || s.win.isDestroyed()) return false;
+    const b = s.win.getBounds();
+    return point.x >= b.x && point.x < b.x + b.width && point.y >= b.y && point.y < b.y + b.height;
+  }) || null;
+}
+
+/** A tab dropped from the strip: onto another window it moves there, off every window it opens a new one. */
+function dropTab(fromState, tabId, point) {
+  if (!data.settings.data.experimental || !fromState || !fromState.tabs) return false;
+  const target = windowAtPoint(point, fromState);
+  if (target) return moveTabToWindow(fromState, tabId, target, Infinity);
+  // Dropped outside every window: the tab gets its own window, unless it's the only tab in this one.
+  if (fromState.tabs.tabs.length <= 1) return false;
+  const tab = fromState.tabs.get(tabId);
+  if (!tab || tab.private) return false;
+  const placed = { x: point.x - 120, y: point.y - 20 };
+  const moved = inWindow(fromState, () => fromState.tabs.release(tabId));
+  if (!moved) return false;
+  if (!openEmptyWindow()) return false;
+  inWindow(W, () => {
+    W.tabs.adopt(moved, 0);
+    W.win.setPosition(Math.round(placed.x), Math.round(placed.y));
+  });
+  return true;
 }
 
 /** Open another Coffee window with its own tabs (experimental). */
