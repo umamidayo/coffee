@@ -7,6 +7,8 @@
     back: s('<path d="M15 18l-6-6 6-6"/>'),
     forward: s('<path d="M9 18l6-6-6-6"/>'),
     reload: s('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>'),
+    bookmarks: s('<path d="M7 4.5h10a1 1 0 0 1 1 1V20l-6-3.8L6 20V5.5a1 1 0 0 1 1-1z"/>'),
+    home: s('<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.5V19h12V9.5"/>'),
     stop: s('<path d="M6 6l12 12M18 6L6 18"/>'),
     plus: s('<path d="M12 5v14M5 12h14"/>'),
     close: s('<path d="M7 7l10 10M17 7L7 17"/>'),

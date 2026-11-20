@@ -27,6 +27,8 @@
   $('back').innerHTML = Icons.back;
   $('forward').innerHTML = Icons.forward;
   $('reload').innerHTML = Icons.reload;
+  $('home').innerHTML = Icons.home;
+  $('bookmarks-btn').innerHTML = Icons.bookmarks;
   $('omni-star').innerHTML = Icons.star;
   $('omni-private').innerHTML = `${Icons.mask}<span>Private</span>`;
   $('omni-private').title = "Private tab: history isn't saved, and cookies are deleted when you close all private tabs";
@@ -153,6 +155,7 @@
   // =====================================================================
   $('back').onclick = () => api.send('nav:back');
   $('forward').onclick = () => api.send('nav:forward');
+  $('home').onclick = (e) => api.send('nav:home', { newTab: e.ctrlKey || e.shiftKey });
   $('reload').onclick = (e) => {
     const t = active();
     if (t && t.loading && !t.newtab) api.send('nav:stop');
@@ -410,6 +413,10 @@
   // Extensions (only when turned on in Settings)
   // =====================================================================
   const extBox = $('ext-actions');
+  const bmBtn = $('bookmarks-btn');
+  bmBtn.dataset.toggle = 'bmfolder';
+  bmBtn.dataset.toggleId = 'root';
+  bmBtn.onclick = () => { openFolderId = 'root'; api.send('bmbutton:open', { rect: rectOf(bmBtn) }); };
   const extBtn = $('ext-btn');
   extBtn.dataset.toggle = 'extensions';
   extBtn.onclick = () => api.send('ext:panel', { rect: rectOf(extBtn) });
@@ -619,6 +626,8 @@
     state.settings = s;
     document.body.classList.toggle('no-bookmarks', !s.bookmarksBarShown);
     applyLayout(s);
+    $('home').hidden = !s.showHome;
+    $('bookmarks-btn').hidden = !s.bookmarksButton;
     applyExtensions(!!s.extensions);
     const up = s.update || {};
     $('update-btn').hidden = up.state !== 'ready';

@@ -127,16 +127,42 @@
     </div>`;
   }
 
+  const SAVED_PREFIX = 'saved:';
   function renderThemes() {
     const wrap = $('themes');
     wrap.textContent = '';
     const current = s.theme.preset;
+    const saved = s.theme.saved || [];
     for (const p of s.presets) {
       const b = document.createElement('button');
       b.className = `theme${current === p.id ? ' on' : ''}`;
       b.innerHTML = `${preview(p)}<div class="label"><span>${p.name}</span>${CHECK}</div>`;
       b.onclick = () => {
-        s.theme = { preset: p.id, custom: s.theme.custom };
+        s.theme = { ...s.theme, preset: p.id };
+        set('theme', s.theme);
+        renderThemes();
+      };
+      wrap.appendChild(b);
+    }
+    for (const t of saved) {
+      const id = `${SAVED_PREFIX}${t.id}`;
+      const b = document.createElement('button');
+      b.className = `theme${current === id ? ' on' : ''}`;
+      b.innerHTML = `${preview(t)}<div class="label"><span></span>${CHECK}</div>`;
+      b.querySelector('.label span').textContent = t.name;
+      const x = Object.assign(document.createElement('span'), { className: 'theme-del', title: 'Delete this theme', textContent: '×' });
+      x.setAttribute('role', 'button');
+      x.setAttribute('aria-label', `Delete ${t.name}`);
+      x.onclick = (e) => {
+        e.stopPropagation();
+        const left = saved.filter((y) => y.id !== t.id);
+        s.theme = { ...s.theme, saved: left, preset: current === id ? 'coffee' : current };
+        set('theme', s.theme);
+        renderThemes();
+      };
+      b.appendChild(x);
+      b.onclick = () => {
+        s.theme = { ...s.theme, preset: id };
         set('theme', s.theme);
         renderThemes();
       };
@@ -148,7 +174,7 @@
     c.onclick = () => {
       // Start the custom theme from whatever is active now.
       const base = s.theme.custom || s.presets.find((p) => p.id === s.theme.preset) || s.presets[0];
-      s.theme = { preset: 'custom', custom: { bg: base.bg, surface: base.surface, text: base.text, accent: base.accent } };
+      s.theme = { ...s.theme, preset: 'custom', custom: { bg: base.bg, surface: base.surface, text: base.text, accent: base.accent } };
       set('theme', s.theme);
       renderThemes();
     };
@@ -160,6 +186,23 @@
       for (const input of editor.querySelectorAll('input[type=color]')) input.value = s.theme.custom[input.dataset.k];
     }
   }
+
+  // Save the custom colors as a named theme; the list is capped on the main side.
+  function saveCustomTheme() {
+    const name = $('themeName').value.trim();
+    const c = s.theme.custom;
+    if (!c) return;
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const entry = { id, name: name || `My theme ${(s.theme.saved || []).length + 1}`, ...c };
+    const saved = [...(s.theme.saved || []), entry].slice(-24);
+    s.theme = { ...s.theme, saved, preset: `${SAVED_PREFIX}${id}` };
+    $('themeName').value = '';
+    set('theme', s.theme);
+    toast(`Saved “${entry.name}”`);
+    renderThemes();
+  }
+  $('saveTheme').onclick = saveCustomTheme;
+  $('themeName').onkeydown = (e) => { if (e.key === 'Enter') saveCustomTheme(); };
 
   // Live preview while dragging the color picker, throttled to one update per frame.
   let raf = 0;
@@ -179,6 +222,7 @@
     engine.innerHTML = s.engines.map((e) => `<option value="${e.id}">${e.name}</option>`).join('');
     engine.value = s.searchEngine;
     $('bookmarksBar').checked = s.bookmarksBar;
+    $('bookmarksButton').checked = !!s.bookmarksButton;
     for (const b of document.querySelectorAll('#tabLayout button')) {
       const on = b.dataset.v === (s.tabLayout || 'vertical');
       b.classList.toggle('on', on);
@@ -188,6 +232,9 @@
     $('compactRow').classList.toggle('disabled', s.tabLayout === 'horizontal');
     $('tabTitles').checked = s.tabTitles !== false;
     $('newtabShortcuts').checked = s.newtabShortcuts !== false;
+    $('showHome').checked = !!s.showHome;
+    if (document.activeElement !== $('homePageInput')) $('homePageInput').value = s.homePage || '';
+    $('homeInfo').textContent = s.homePage ? 'Opens this address' : 'Leave blank to use the new tab page';
     const n = s.hiddenShortcuts || 0;
     $('hiddenCount').textContent = n ? `${n} site${n === 1 ? '' : 's'} hidden from the new tab page` : 'Remove a shortcut with the × that appears when you hover it';
     $('restoreShortcuts').disabled = !n;
@@ -251,8 +298,8 @@
     fillSites('cookieSites', 'cookies:sites');
   }
 
-  async function renderDefaultBrowser() {
-    const st = (await api.invoke('browser:default')) || {};
+  function renderDefaultBrowser(st) {
+    st = st || {};
     $('defaultTitle').textContent = st.isDefault ? 'Coffee is your default browser' : 'Coffee is not your default browser';
     $('defaultInfo').textContent = st.isDefault ? 'Links from other apps open here' : st.name ? `Currently ${st.name}` : 'Links from other apps open in another browser';
     $('makeDefault').hidden = !!st.isDefault;
@@ -296,9 +343,24 @@
   // ---- simple controls ----
   $('engine').onchange = (e) => set('searchEngine', e.target.value);
   $('bookmarksBar').onchange = (e) => set('bookmarksBar', e.target.checked);
+  $('bookmarksButton').onchange = (e) => set('bookmarksButton', e.target.checked);
   for (const b of document.querySelectorAll('#tabLayout button')) b.onclick = () => set('tabLayout', b.dataset.v);
   $('compactSidebar').onchange = (e) => set('compactSidebar', e.target.checked);
   $('tabTitles').onchange = (e) => set('tabTitles', e.target.checked);
+  $('showHome').onchange = (e) => set('showHome', e.target.checked);
+  function saveHomePage() {
+    const v = $('homePageInput').value.trim();
+    set('homePage', v);
+    // The main process rejects anything that isn't a web address and keeps the old value.
+    setTimeout(async () => {
+      const cur = await api.invoke('settings:get');
+      if (cur) s = cur;
+      $('homePageInput').value = s.homePage || '';
+      toast(!v ? 'Home page set to the new tab page' : s.homePage ? 'Home page saved' : 'That isn’t a web address');
+    }, 150);
+  }
+  $('homePageSave').onclick = saveHomePage;
+  $('homePageInput').onkeydown = (e) => { if (e.key === 'Enter') saveHomePage(); };
   $('runSetup').onclick = () => { location.href = 'coffee://welcome/'; };
   $('newtabShortcuts').onchange = (e) => set('newtabShortcuts', e.target.checked);
   $('restoreShortcuts').onclick = () => { api.send('shortcuts:restore'); toast('Shortcuts restored'); };
@@ -320,7 +382,10 @@
   $('viewHistory').onclick = () => { location.href = 'coffee://history/'; };
   $('clearData').onclick = () => { api.send('data:clear'); toast('Cookies and site data cleared'); setTimeout(refreshSiteLists, 400); };
   $('makeDefault').onclick = () => { api.send('browser:set-default'); };
-  window.addEventListener('focus', renderDefaultBrowser);
+  api.on('browser', renderDefaultBrowser);
+  const checkDefaultBrowser = async () => renderDefaultBrowser(await api.invoke('browser:default'));
+  window.addEventListener('focus', checkDefaultBrowser);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) checkDefaultBrowser(); });
   $('changeDir').onclick = async () => { $('downloadDir').textContent = await api.invoke('downloads:choose-dir'); };
 
   // ---- import from another browser ----
@@ -360,7 +425,7 @@
   };
   setupImport();
   refreshSiteLists();
-  renderDefaultBrowser();
+  checkDefaultBrowser();
 
   api.on('settings', (next) => {
     const editingCustom = s && s.theme.preset === 'custom' && document.activeElement && document.activeElement.type === 'color';

@@ -117,6 +117,9 @@ body.t-sidebar #root { inset: 0 12px 0 0; }
 /* ---------- Downloads ---------- */
 .dl-head { display: flex; align-items: center; height: 50px; padding: 0 10px 0 16px; }
 .dl-head h1 { flex: 1; margin: 0; font: 600 14px/1 var(--font-display); }
+.dl-folder { width: 30px; height: 30px; margin-right: 4px; display: grid; place-items: center; border-radius: 8px; color: var(--muted); }
+.dl-folder svg { width: 16px; height: 16px; }
+.dl-folder:hover { background: var(--hover); color: var(--text); }
 .link-btn { height: 26px; padding: 0 10px; border-radius: 7px; color: var(--muted); font-size: 12px; }
 .link-btn:hover { background: var(--hover); color: var(--text); }
 .dl-list { padding: 0 6px 8px; overflow-y: auto; max-height: calc(100% - 50px); scrollbar-width: thin; }

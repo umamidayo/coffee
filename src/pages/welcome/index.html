@@ -59,13 +59,13 @@
       <div class="engines" id="engines"></div>
     </section>
 
-    <!-- 4: extras -->
+    <!-- 4: privacy & browsing -->
     <section class="step" data-step="4">
-      <h2>A few more things</h2>
-      <p class="lead">Sensible defaults are already on.</p>
+      <h2>Privacy and browsing</h2>
+      <p class="lead">Sensible defaults are already on. Change any of them here or later in Settings.</p>
       <div class="toggles">
         <label class="toggle-row">
-          <span><b>Block ads &amp; trackers</b><small>Faster, cleaner pages, including YouTube</small></span>
+          <span><b>Block ads &amp; trackers</b><small>Faster, cleaner pages, including YouTube. Pause it for any site from the shield</small></span>
           <span class="switch"><input type="checkbox" id="adblock"><i></i></span>
         </label>
         <label class="toggle-row">
@@ -73,10 +73,47 @@
           <span class="switch"><input type="checkbox" id="bookmarksBar"><i></i></span>
         </label>
         <label class="toggle-row">
+          <span><b>Bookmarks button</b><small>A toolbar button that opens your bookmarks as a menu. Use it instead of the bar, or with it</small></span>
+          <span class="switch"><input type="checkbox" id="bookmarksButton"><i></i></span>
+        </label>
+        <label class="toggle-row">
           <span><b>Shortcuts on the new tab page</b><small>Off shows just the time and date</small></span>
           <span class="switch"><input type="checkbox" id="newtabShortcuts"><i></i></span>
         </label>
       </div>
+    </section>
+
+    <!-- 5: home page & extensions -->
+    <section class="step" data-step="5">
+      <h2>Home, and extra tools</h2>
+      <p class="lead">Pick where the Home button goes, and whether to add Chrome extensions.</p>
+      <div class="field-block">
+        <label class="field-label" for="homePage">Home page</label>
+        <div class="inline-field">
+          <input class="field" id="homePage" type="text" placeholder="Leave blank for the new tab page" spellcheck="false" autocomplete="off">
+          <button class="btn" id="homePageSave">Save</button>
+        </div>
+        <p class="note-line" id="homeNote">Leave blank to use the new tab page</p>
+      </div>
+      <div class="toggles">
+        <label class="toggle-row">
+          <span><b>Show Home button</b><small>A house icon next to reload. Ctrl-click opens it in a new tab</small></span>
+          <span class="switch"><input type="checkbox" id="showHome"><i></i></span>
+        </label>
+        <label class="toggle-row">
+          <span><b>Allow Chrome extensions</b><small>Install from the Chrome Web Store. Takes effect after you restart Coffee</small></span>
+          <span class="switch"><input type="checkbox" id="extensions"><i></i></span>
+        </label>
+      </div>
+      <p class="note-line" id="extNote" hidden>Restart Coffee to turn extensions on.</p>
+    </section>
+
+    <!-- 6: default browser -->
+    <section class="step" data-step="6">
+      <h2>Make Coffee your browser</h2>
+      <p class="lead">Links from other apps will open here. Windows asks you to confirm the change.</p>
+      <button class="btn primary big" id="makeDefault">Set as default browser</button>
+      <p class="note-line" id="defaultNote"></p>
     </section>
 
     <!-- import (only shown when another browser is installed) -->
@@ -92,7 +129,7 @@
     </section>
 
     <!-- done -->
-    <section class="step" data-step="5">
+    <section class="step" data-step="final">
       <div class="mark done">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
       </div>

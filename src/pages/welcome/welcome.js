@@ -65,15 +65,25 @@
   function renderThemes() {
     const wrap = $('themes');
     wrap.textContent = '';
+    const choose = (preset, b) => {
+      s.theme = { ...s.theme, preset };
+      set('theme', s.theme);
+      for (const x of wrap.children) x.classList.toggle('on', x === b);
+    };
     for (const p of s.presets) {
       const b = document.createElement('button');
       b.className = `theme${s.theme.preset === p.id ? ' on' : ''}`;
       b.innerHTML = `${preview(p)}<div class="label">${p.name}</div>`;
-      b.onclick = () => {
-        s.theme = { preset: p.id, custom: s.theme.custom };
-        set('theme', s.theme);
-        for (const x of wrap.children) x.classList.toggle('on', x === b);
-      };
+      b.onclick = () => choose(p.id, b);
+      wrap.appendChild(b);
+    }
+    for (const t of s.theme.saved || []) {
+      const id = `saved:${t.id}`;
+      const b = document.createElement('button');
+      b.className = `theme${s.theme.preset === id ? ' on' : ''}`;
+      b.innerHTML = `${preview(t)}<div class="label"></div>`;
+      b.querySelector('.label').textContent = t.name;
+      b.onclick = () => choose(id, b);
       wrap.appendChild(b);
     }
   }
@@ -116,9 +126,35 @@
   }
 
   // ---- step 4: extras ---------------------------------------------------
-  for (const key of ['adblock', 'bookmarksBar', 'newtabShortcuts']) {
+  const TOGGLES = ['adblock', 'bookmarksBar', 'bookmarksButton', 'newtabShortcuts', 'showHome', 'extensions'];
+  for (const key of TOGGLES) {
     $(key).onchange = (e) => set(key, e.target.checked);
   }
+  // Extensions need a restart to load, so the step says so.
+  $('extensions').onchange = (e) => { set('extensions', e.target.checked); $('extNote').hidden = false; };
+
+  // ---- step: home page ----------------------------------------------------
+  const homeInput = $('homePage');
+  const saveHome = () => {
+    const v = homeInput.value.trim();
+    set('homePage', v);
+    setTimeout(async () => {
+      const cur = await api.invoke('settings:get');
+      homeInput.value = (cur && cur.homePage) || '';
+      $('homeNote').textContent = v && !(cur && cur.homePage) ? 'That isn’t a web address. Try something like example.com' : (cur && cur.homePage ? 'Saved' : 'Using the new tab page');
+    }, 150);
+  };
+  $('homePageSave').onclick = saveHome;
+  homeInput.onkeydown = (e) => { if (e.key === 'Enter') saveHome(); };
+
+  // ---- step: default browser ----------------------------------------------
+  $('makeDefault').onclick = () => api.send('browser:set-default');
+  const showDefault = async () => {
+    const st = (await api.invoke('browser:default')) || {};
+    $('defaultNote').textContent = st.isDefault ? 'Coffee is your default browser.' : 'Windows will ask you to confirm in its Default apps settings.';
+    $('makeDefault').hidden = !!st.isDefault;
+  };
+  window.addEventListener('focus', showDefault);
 
   // ---- import step ------------------------------------------------------
   async function setupImport() {
@@ -164,7 +200,12 @@
     renderEngines();
     $('adblock').checked = !!s.adblock;
     $('bookmarksBar').checked = !!s.bookmarksBar;
+    $('bookmarksButton').checked = !!s.bookmarksButton;
     $('newtabShortcuts').checked = s.newtabShortcuts !== false;
+    $('showHome').checked = !!s.showHome;
+    $('extensions').checked = !!s.extensions;
+    homeInput.value = s.homePage || '';
+    showDefault();
     go(0);
   });
 })();

@@ -16,17 +16,20 @@ const settings = new Store('settings', {
   searchEngine: 'google',
   adblock: true,
   bookmarksBar: true,
+  bookmarksButton: false,  // toolbar button that opens your bookmarks as a menu (works with or without the bar)
   tabLayout: 'vertical',   // 'vertical' (side) | 'horizontal' (top)
   compactSidebar: false,   // side tabs hidden until the mouse reaches the left edge
   tabTitles: true,         // titles on every tab layout (false = icons only)
   adblockExceptions: [],   // sites (and their subdomains) where ads and trackers aren't blocked
+  homePage: '',            // address the Home button / Alt+Home opens ('' = the new tab page)
+  showHome: false,         // Home button in the toolbar
   newtabShortcuts: true,   // shortcut tiles on the new tab page
   hiddenShortcuts: [],     // hosts removed from the new tab page
   onboarded: false,        // finished (or skipped) the welcome setup
   extensions: false,       // opt-in Chrome extension support (takes effect on restart)
   sleepMinutes: 30,
   restoreSession: true,
-  theme: { preset: 'coffee', custom: null },
+  theme: { preset: 'coffee', custom: null, saved: [] },
   downloadDir: app.getPath('downloads'),
   windowBounds: null,
   maximized: false,

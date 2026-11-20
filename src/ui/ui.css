@@ -104,6 +104,7 @@ body.tabs-top #tabstrip { display: flex; }
 .icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .icon-btn:active:not(:disabled) svg { transform: scale(.88); }
 .icon-btn:disabled { opacity: .35; }
+.icon-btn[hidden] { display: none; }
 .icon-btn svg { transition: transform .15s; }
 #reload.spin-once svg { animation: spin-once .5s var(--ease); }
 @keyframes spin-once { from { transform: rotate(-200deg); } }

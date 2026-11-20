@@ -248,7 +248,7 @@ function createWindow() {
   const sendState = () => { layout(); emit('window', windowState()); };
   win.on('resize', layout);
   for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) win.on(ev, sendState);
-  win.on('focus', () => { emit('window', windowState()); updatePeekWatch(); });
+  win.on('focus', () => { emit('window', windowState()); updatePeekWatch(); refreshDefaultBrowser(); });
   win.on('blur', () => {
     emit('window', windowState());
     updatePeekWatch();
@@ -403,12 +403,14 @@ function publicSettings() {
   return {
     bookmarksBar: s.bookmarksBar,
     bookmarksBarShown: bookmarksBarShown(),
+    bookmarksButton: !!s.bookmarksButton,
     tabLayout: tabsOnTop() ? 'horizontal' : 'vertical',
     compactSidebar: !!data.settings.data.compactSidebar,
     tabTitles: data.settings.data.tabTitles !== false,
     extensions: !!ext,
     adblock: s.adblock,
     adblockExceptions: s.adblockExceptions || [],
+    showHome: !!s.showHome,
     searchEngine: s.searchEngine,
     update: updater.status,
     searchEngineName: (data.SEARCH_ENGINES[s.searchEngine] || data.SEARCH_ENGINES.google).name,
@@ -475,7 +477,7 @@ function onInput(e, input, tab) {
     if (key === 'ArrowLeft') goBack();
     else if (key === 'ArrowRight') goForward();
     else if (key === 'd') focusUrlbar();
-    else if (key === 'Home') navigate(NEWTAB);
+    else if (key === 'Home') navigate(homeUrl());
     else handled = false;
   } else if (!ctrl && !alt) {
     if (key === 'F5') reload(false);
@@ -615,7 +617,7 @@ function tabMenu(id, x, y) {
     { label: 'Close other tabs', disabled: tabs.tabs.length < 2, action: () => {
       for (const t of [...tabs.tabs]) if (t !== tab) tabs.close(t.id);
     } },
-    { label: 'Close tabs below', disabled: i === tabs.tabs.length - 1, action: () => {
+    { label: tabsOnTop() ? 'Close tabs to the right' : 'Close tabs below', disabled: i === tabs.tabs.length - 1, action: () => {
       for (const t of tabs.tabs.slice(i + 1)) tabs.close(t.id);
     } },
   ]);
@@ -715,18 +717,28 @@ function folderEditor({ id = null, parent = null }) {
 
 /** Dropdown listing a folder's contents, anchored under its bar button. */
 let folderAnchor = null;
-function openFolder(id, rect) {
-  const folder = data.itemById(id);
-  if (!folder || folder.type !== 'folder') return;
+let folderFromButton = false; // opened from the toolbar button: top-level folders get a way back to the root
+const BM_ROOT = 'root';       // the toolbar button's top-level view (not a real folder)
+function openFolder(id, rect, fromButton) {
+  const isRoot = id === BM_ROOT;
+  const folder = isRoot ? { id: BM_ROOT, title: 'Bookmarks', parent: null } : data.itemById(id);
+  if (!folder || (!isRoot && folder.type !== 'folder')) return;
   if (rect) folderAnchor = rect;
+  if (typeof fromButton === 'boolean') folderFromButton = fromButton;
   const r = folderAnchor || { x: 80, y: TOPBAR_H, width: 0, height: BOOKMARKS_H - 4 };
-  const items = data.children(id).map((b) => ({ id: b.id, type: b.type, title: b.title, url: b.url || '', favicon: b.favicon || '' }));
-  const back = folder.parent ? data.itemById(folder.parent) : null;
+  const items = data.children(isRoot ? null : id).map((b) => ({ id: b.id, type: b.type, title: b.title, url: b.url || '', favicon: b.favicon || '' }));
+  let back = null;
+  if (!isRoot) {
+    if (folder.parent) { const p = data.itemById(folder.parent); if (p) back = { id: p.id, title: p.title }; }
+    else if (folderFromButton) back = { id: BM_ROOT, title: 'Bookmarks' };
+  }
   const rows = Math.min(Math.max(items.length, 1), 12);
   const width = 280 + 2 * M;
   const height = 8 + (back ? 34 : 0) + rows * 32 + (items.some((b) => b.type === 'bookmark') ? 41 : 0) + 8 + 2 * M;
-  overlay.open('bmfolder', { x: r.x - M, y: r.y + r.height + 4 - M, width, height },
-    { id, title: folder.title, items, back: back ? { id: back.id, title: back.title } : null },
+  const [w] = win.getContentSize();
+  const x = Math.max(0, Math.min(r.x - M, w - width));
+  overlay.open('bmfolder', { x, y: r.y + r.height + 4 - M, width, height },
+    { id, root: isRoot, title: folder.title, items, back },
     { focus: true });
 }
 
@@ -875,13 +887,28 @@ async function clearSiteData(input) {
 // Default browser
 // ---------------------------------------------------------------------------
 
+/** Where the installed Coffee lives; also matches when running from source (npm start). */
+function coffeeExePaths() {
+  const installed = path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Coffee', 'Coffee.exe');
+  return [process.execPath, app.getPath('exe'), installed].filter(Boolean).map((p) => path.resolve(p).toLowerCase());
+}
+
 async function defaultBrowserStatus() {
   try {
     const info = await app.getApplicationInfoForProtocol('https://');
-    const same = !!info.path && path.resolve(info.path).toLowerCase() === path.resolve(process.execPath).toLowerCase();
+    const handler = info.path ? path.resolve(info.path).toLowerCase() : '';
+    const same = !!handler && coffeeExePaths().includes(handler);
     return { isDefault: same, name: info.name || '' };
   } catch {
     return { isDefault: false, name: '' };
+  }
+}
+
+/** Re-check after the user changes the default in Windows, then tell any open Settings tab. */
+async function refreshDefaultBrowser() {
+  const st = await defaultBrowserStatus();
+  for (const t of tabs.tabs) {
+    if (t.wc && t.url.startsWith('coffee://settings')) t.wc.send('ev:browser', st);
   }
 }
 
@@ -1058,6 +1085,23 @@ let lastOmniRect = null;
 // Settings changes from coffee://settings
 // ---------------------------------------------------------------------------
 
+/** A typed home page as a full http(s) address, or '' if it isn't one. */
+function normalizeHomePage(input) {
+  let s = String(input || '').trim();
+  if (!s || /\s/.test(s)) return '';
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `https://${s}`;
+  try {
+    const u = new URL(s);
+    if (!/^https?:$/.test(u.protocol)) return '';
+    if (!u.hostname.includes('.') && u.hostname !== 'localhost') return '';
+    return u.href;
+  } catch {
+    return '';
+  }
+}
+
+const homeUrl = () => data.settings.data.homePage || NEWTAB;
+
 function setSetting(key, value) {
   const s = data.settings.data;
   switch (key) {
@@ -1071,6 +1115,10 @@ function setSetting(key, value) {
     case 'bookmarksBar':
       s.bookmarksBar = !!value;
       layout();
+      break;
+    case 'bookmarksButton':
+      s.bookmarksButton = !!value;
+      if (!s.bookmarksButton && overlay.isOpen('bmfolder')) overlay.close();
       break;
     case 'tabLayout':
       s.tabLayout = value === 'horizontal' ? 'horizontal' : 'vertical';
@@ -1090,6 +1138,17 @@ function setSetting(key, value) {
     case 'newtabShortcuts':
       s.newtabShortcuts = !!value;
       break;
+    case 'homePage':
+      if (!String(value || '').trim()) s.homePage = '';
+      else {
+        const url = normalizeHomePage(value);
+        if (!url) break;
+        s.homePage = url;
+      }
+      break;
+    case 'showHome':
+      s.showHome = !!value;
+      break;
     case 'extensions':
       s.extensions = !!value; // takes effect after a restart
       break;
@@ -1101,8 +1160,11 @@ function setSetting(key, value) {
       break;
     case 'theme': {
       const v = value || {};
-      const preset = v.preset === 'custom' || themes.PRESETS.some((p) => p.id === v.preset) ? v.preset : 'coffee';
-      s.theme = { preset, custom: v.custom ? themes.sanitizeCustom(v.custom) : s.theme.custom };
+      const saved = themes.sanitizeSaved(v.saved !== undefined ? v.saved : s.theme.saved);
+      const savedIds = new Set(saved.map((x) => `saved:${x.id}`));
+      const preset = v.preset === 'custom' || themes.PRESETS.some((p) => p.id === v.preset) || savedIds.has(v.preset) ? v.preset : 'coffee';
+      s.theme = { preset, custom: v.custom ? themes.sanitizeCustom(v.custom) : s.theme.custom, saved };
+      if (s.theme.custom === undefined) s.theme.custom = null;
       applyTheme();
       break;
     }
@@ -1122,16 +1184,19 @@ function settingsPayload() {
     adblock: s.adblock,
     adblockExceptions: s.adblockExceptions || [],
     bookmarksBar: s.bookmarksBar,
+    bookmarksButton: !!s.bookmarksButton,
     tabLayout: s.tabLayout,
     compactSidebar: !!s.compactSidebar,
     tabTitles: s.tabTitles !== false,
     newtabShortcuts: s.newtabShortcuts !== false,
+    homePage: s.homePage || '',
+    showHome: !!s.showHome,
     extensions: !!s.extensions,
     extensionsRunning: !!ext,
     hiddenShortcuts: (s.hiddenShortcuts || []).length,
     sleepMinutes: s.sleepMinutes,
     restoreSession: s.restoreSession,
-    theme: s.theme,
+    theme: { preset: s.theme.preset, custom: s.theme.custom, saved: themes.sanitizeSaved(s.theme.saved) },
     presets: themes.PRESETS,
     downloadDir: s.downloadDir,
     blockedTotal: s.blockedTotal,
@@ -1214,7 +1279,7 @@ ipcMain.on('cmd', (e, type, p = {}) => {
     case 'nav:forward': goForward(); break;
     case 'nav:reload': reload(!!p.hard); break;
     case 'nav:stop': { const wc = activeWc(); if (wc) wc.stop(); break; }
-    case 'nav:home': navigate(NEWTAB); break;
+    case 'nav:home': navigate(homeUrl(), { newTab: !!p.newTab }); break;
     case 'page:focus': { const t = tabs.active; if (t) t.urlbarUntil = 0; const wc = activeWc(); if (wc) wc.focus(); break; }
     case 'urlbar:typing': if (tabs.active) tabs.active.urlbarUntil = 0; break;
 
@@ -1235,6 +1300,9 @@ ipcMain.on('cmd', (e, type, p = {}) => {
 
     // features
     case 'downloads:toggle': toggleDownloads(p.rect); break;
+    case 'downloads:folder':
+      shell.openPath(data.settings.data.downloadDir).then((err) => { if (err) console.error('Open downloads folder failed:', err); });
+      break;
     case 'downloads:action':
       downloads.action(p.id, p.what);
       if (p.what === 'open' || p.what === 'show') overlay.close();
@@ -1274,9 +1342,10 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       data.settings.save();
       broadcastSettings();
       break;
-    case 'bmfolder:open': openFolder(p.id, p.rect); break;
+    case 'bmfolder:open': openFolder(p.id, p.rect, false); break;
+    case 'bmbutton:open': openFolder(BM_ROOT, p.rect, true); break;
     case 'bmfolder:nav': openFolder(p.id); break;
-    case 'bmfolder:openall': openAll(data.children(p.id).filter((b) => b.type === 'bookmark')); overlay.close(); break;
+    case 'bmfolder:openall': openAll(data.children(p.id === BM_ROOT ? null : p.id).filter((b) => b.type === 'bookmark')); overlay.close(); break;
     case 'shield:menu': shieldMenu(p.rect); break;
     case 'app:menu': showMenu(p.x, p.y, [
       { label: 'New tab', accel: 'Ctrl+T', action: () => tabs.create() },

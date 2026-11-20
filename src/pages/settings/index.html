@@ -20,6 +20,7 @@
         <a href="#appearance" data-i="palette">Appearance</a>
         <a href="#tabs" data-i="tabs">Tabs</a>
         <a href="#newtab" data-i="home">New tab page</a>
+        <a href="#home-page" data-i="home">Home page</a>
         <a href="#search-engine" data-i="search">Search</a>
         <a href="#privacy" data-i="shield">Privacy</a>
         <a href="#default-browser" data-i="globe">Default browser</a>
@@ -33,7 +34,7 @@
 
     <main id="content">
       <!-- Appearance -->
-      <section id="appearance" data-keywords="theme colors dark light custom accent bookmarks bar look">
+      <section id="appearance" data-keywords="theme colors dark light custom accent bookmarks bar button menu minimal look">
         <header><h2>Appearance</h2><p>Colors, themes and the bookmarks bar.</p></header>
         <div class="themes" id="themes"></div>
         <div class="custom" id="custom" hidden>
@@ -43,12 +44,20 @@
             <label class="swatch"><input type="color" data-k="text"><span>Text</span></label>
             <label class="swatch"><input type="color" data-k="accent"><span>Accent</span></label>
           </div>
-          <p class="hint">Pick four colors. Coffee works out every other shade from them.</p>
+          <div class="save-theme">
+            <input class="site-input" id="themeName" type="text" maxlength="32" placeholder="Name this theme" spellcheck="false" autocomplete="off">
+            <button class="btn" id="saveTheme">Save as theme</button>
+          </div>
+          <p class="hint">Pick four colors. Coffee works out every other shade from them. Saved themes appear above.</p>
         </div>
         <div class="card">
           <div class="row">
             <div class="txt"><b>Show bookmarks bar</b><span>Appears under the address bar once you have bookmarks · Ctrl+Shift+B</span></div>
             <label class="switch"><input type="checkbox" id="bookmarksBar"><i></i></label>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Show bookmarks button</b><span>A toolbar button that opens your bookmarks as a menu. Use it instead of the bar, or alongside it</span></div>
+            <label class="switch"><input type="checkbox" id="bookmarksButton"><i></i></label>
           </div>
         </div>
       </section>
@@ -86,6 +95,22 @@
           <div class="row">
             <div class="txt"><b>Removed shortcuts</b><span id="hiddenCount"></span></div>
             <button class="btn" id="restoreShortcuts">Restore</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Home page -->
+      <section id="home-page" data-keywords="home page homepage button startup website address alt+home">
+        <header><h2>Home page</h2><p>Where the Home button and Alt+Home take you.</p></header>
+        <div class="card">
+          <div class="row">
+            <div class="txt"><b>Home page</b><span id="homeInfo">Leave blank to use the new tab page</span></div>
+            <input class="site-input wide" id="homePageInput" type="text" placeholder="New tab page" spellcheck="false" autocomplete="off">
+            <button class="btn" id="homePageSave">Save</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>Show Home button</b><span>Next to reload in the toolbar. Ctrl-click opens it in a new tab</span></div>
+            <label class="switch"><input type="checkbox" id="showHome"><i></i></label>
           </div>
         </div>
       </section>

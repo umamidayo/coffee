@@ -152,7 +152,8 @@
       return;
     }
     const p = panel('downloads');
-    p.innerHTML = `<div class="dl-head"><h1>Downloads</h1>${data.items.length ? '<button class="link-btn" data-clear>Clear</button>' : ''}</div>`;
+    p.innerHTML = `<div class="dl-head"><h1>Downloads</h1><button class="icon-btn dl-folder" data-folder title="Open downloads folder" aria-label="Open downloads folder">${Icons.folder}</button>${data.items.length ? '<button class="link-btn" data-clear>Clear</button>' : ''}</div>`;
+    p.querySelector('[data-folder]').onclick = () => api.send('downloads:folder');
     if (!data.items.length) {
       p.insertAdjacentHTML('beforeend', `<div class="empty">${Icons.download}<span>No downloads yet</span></div>`);
       return;
@@ -204,7 +205,7 @@
     const p = panel('menu bmf', reopen);
     let html = '';
     if (data.back) html += `<div class="mi bmf-back" data-nav="${esc(data.back.id)}"><span class="check">${Icons.back}</span><span class="label">${esc(data.back.title)}</span></div><div class="msep"></div>`;
-    if (!data.items.length) html += '<div class="mi disabled"><span class="check"></span><span class="label">This folder is empty</span></div>';
+    if (!data.items.length) html += `<div class="mi disabled"><span class="check"></span><span class="label">${data.root ? 'No bookmarks yet. Press Ctrl+D to add one' : 'This folder is empty'}</span></div>`;
     p.innerHTML = `${html}<div class="bmf-list"></div>`;
     const list = p.querySelector('.bmf-list');
     for (const b of data.items) {
