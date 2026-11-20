@@ -60,11 +60,21 @@ const RADIUS = 0;       // page runs to the window edges: no frame
 const M = 12; // shadow margin around overlay panels (matches overlay.css)
 
 // Window state. `W` holds this window's BrowserWindow, chrome page, overlay and tab manager.
-const W = { win: null, ui: null, overlay: null, tabs: null };
+let W = { win: null, ui: null, overlay: null, tabs: null };
 let webSession = null;
 let theme = themes.resolve(data.settings.data.theme);
 let htmlFullscreenTab = null;
 let sessionTimer = null;
+
+// Every open window's state. `W` (above) is the one the current handler acts on.
+const winStates = [];
+
+/** Run `fn` with `W` set to `state` (a window's own state), then restore the previous window. */
+function inWindow(state, fn) {
+  const prev = W;
+  W = state;
+  try { return fn(); } finally { W = prev; }
+}
 
 const emit = (ev, payload) => {
   if (W.ui && !W.ui.isDestroyed()) W.ui.send(`ev:${ev}`, payload);
@@ -208,6 +218,10 @@ function lockDown(wc) {
 function createWindow() {
   const s = data.settings.data;
   const b = s.windowBounds || {};
+  const state = { win: null, ui: null, overlay: null, tabs: null };
+  winStates.push(state);
+  const prevW = W;
+  W = state;
   W.win = new BrowserWindow({
     width: b.width || 1360,
     height: b.height || 860,
@@ -243,34 +257,39 @@ function createWindow() {
   lockDown(W.ui);
   lockDown(W.overlay.wc);
 
-  const sendState = () => { layout(); emit('window', windowState()); };
-  W.win.on('resize', layout);
+  // Window-level events run against this window's own state, not whichever
+  // window happens to be current.
+  const bind = (fn) => (...args) => inWindow(state, () => fn(...args));
+  const sendState = bind(() => { layout(); emit('window', windowState()); });
+  W.win.on('resize', bind(layout));
   for (const ev of ['maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) W.win.on(ev, sendState);
-  W.win.on('focus', () => { emit('window', windowState()); updatePeekWatch(); refreshDefaultBrowser(); });
-  W.win.on('blur', () => {
+  W.win.on('focus', bind(() => { emit('window', windowState()); updatePeekWatch(); refreshDefaultBrowser(); }));
+  W.win.on('blur', bind(() => {
     emit('window', windowState());
     updatePeekWatch();
     if (W.overlay.type !== 'suggest') W.overlay.close();
-  });
+  }));
 
   // Mouse back/forward buttons.
-  W.win.on('app-command', (_e, cmd) => {
+  W.win.on('app-command', bind((_e, cmd) => {
     if (cmd === 'browser-backward') goBack();
     else if (cmd === 'browser-forward') goForward();
-  });
+  }));
 
-  W.win.on('close', () => {
-    data.settings.data.maximized = W.win.isMaximized();
-    data.settings.data.windowBounds = W.win.getNormalBounds();
+  W.win.on('close', bind(() => {
+    data.settings.data.maximized = state.win.isMaximized();
+    data.settings.data.windowBounds = state.win.getNormalBounds();
     data.settings.save();
-    W.tabs.saveSession();
-  });
-  W.win.on('closed', () => {
-    W.tabs.destroy();
-    W.win = null;
-  });
+    state.tabs.saveSession();
+  }));
+  W.win.on('closed', bind(() => {
+    state.tabs.destroy();
+    state.win = null;
+    const i = winStates.indexOf(state);
+    if (i >= 0) winStates.splice(i, 1);
+  }));
 
-  W.tabs = new TabManager(W.win, webSession, {
+  const hooks = {
     radius: () => pageBounds().radius,
     themeBg: () => theme.vars['--bg'],
     layout,
@@ -330,7 +349,13 @@ function createWindow() {
     privateEnded: endPrivateBrowsing,
     viewCreated: (tab) => { if (ext) ext.tabCreated(tab, W.win); },
     viewDestroyed: (tab) => { if (ext) ext.tabRemoved(tab); },
-  });
+  };
+  // Each hook runs against this window's own state.
+  const boundHooks = Object.fromEntries(Object.entries(hooks).map(([k, fn]) => [k, bind(fn)]));
+  W.tabs = new TabManager(W.win, webSession, boundHooks);
+  // The window just created is the one in front; it stays current after setup.
+  if (!prevW.win || prevW.win.isDestroyed()) W = state;
+  else W = prevW;
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,10 +1261,17 @@ function onBlocked(wcId) {
 const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete', 'history:clear-range', 'history:clear-site', 'cookies:clear-site', 'adblock:allow', 'browser:set-default']);
 const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list', 'history:sites', 'cookies:sites', 'browser:default']);
 
+/** The window state that owns a sender's chrome or overlay (falls back to the current window). */
+function ownerOf(e) {
+  const wc = e.sender;
+  return winStates.find((s) => s.ui === wc || (s.overlay && s.overlay.wc === wc)) || W;
+}
+
 function senderKind(e) {
   const wc = e.sender;
-  if (wc === W.ui) return 'ui';
-  if (W.overlay && wc === W.overlay.wc) return 'overlay';
+  const owner = ownerOf(e);
+  if (wc === owner.ui) return 'ui';
+  if (owner.overlay && wc === owner.overlay.wc) return 'overlay';
   const url = e.senderFrame ? e.senderFrame.url : wc.getURL();
   if (url && url.startsWith('coffee://')) return 'internal';
   return null;
@@ -1252,6 +1284,10 @@ ipcMain.on('theme:sync', (e) => {
 ipcMain.on('cmd', (e, type, p = {}) => {
   const kind = senderKind(e);
   if (!kind || (kind === 'internal' && !INTERNAL_SEND.has(type))) return;
+  inWindow(ownerOf(e), () => runCommand(e, kind, type, p));
+});
+
+function runCommand(e, kind, type, p) {
   p = p || {};
   switch (type) {
     // tabs
@@ -1413,11 +1449,15 @@ ipcMain.on('cmd', (e, type, p = {}) => {
       break;
     default:
   }
-});
+}
 
 ipcMain.handle('invoke', async (e, type, p = {}) => {
   const kind = senderKind(e);
   if (!kind || (kind === 'internal' && !INTERNAL_INVOKE.has(type))) return null;
+  return inWindow(ownerOf(e), () => runInvoke(e, type, p));
+});
+
+async function runInvoke(e, type, p) {
   p = p || {};
   switch (type) {
     case 'init':
@@ -1457,7 +1497,7 @@ ipcMain.handle('invoke', async (e, type, p = {}) => {
     }
     default: return null;
   }
-});
+}
 
 // ---------------------------------------------------------------------------
 // Internal pages: coffee://newtab, coffee://settings, coffee://error
