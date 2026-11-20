@@ -27,6 +27,7 @@ const settings = new Store('settings', {
   hiddenShortcuts: [],     // hosts removed from the new tab page
   onboarded: false,        // finished (or skipped) the welcome setup
   extensions: false,       // opt-in Chrome extension support (takes effect on restart)
+  experimental: false,     // opt-in experimental features (multi-window, multi-view); off until stable
   sleepMinutes: 30,
   restoreSession: true,
   theme: { preset: 'coffee', custom: null, saved: [] },

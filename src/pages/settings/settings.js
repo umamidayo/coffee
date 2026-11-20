@@ -239,6 +239,7 @@
     $('hiddenCount').textContent = n ? `${n} site${n === 1 ? '' : 's'} hidden from the new tab page` : 'Remove a shortcut with the × that appears when you hover it';
     $('restoreShortcuts').disabled = !n;
     $('restoreSession').checked = s.restoreSession;
+    $('experimental').checked = !!s.experimental;
     $('adblock').checked = s.adblock;
     $('blocked').textContent = `${s.blockedTotal.toLocaleString()} ads and trackers blocked so far`;
     $('sleepMinutes').value = String(s.sleepMinutes);
@@ -365,6 +366,7 @@
   $('newtabShortcuts').onchange = (e) => set('newtabShortcuts', e.target.checked);
   $('restoreShortcuts').onclick = () => { api.send('shortcuts:restore'); toast('Shortcuts restored'); };
   $('restoreSession').onchange = (e) => set('restoreSession', e.target.checked);
+  $('experimental').onchange = (e) => set('experimental', e.target.checked);
   $('adblock').onchange = (e) => set('adblock', e.target.checked);
   $('sleepMinutes').onchange = (e) => set('sleepMinutes', Number(e.target.value));
   $('clearHistory').onclick = () => {
