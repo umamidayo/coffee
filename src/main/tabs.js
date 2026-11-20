@@ -398,7 +398,13 @@ class TabManager {
   }
 
   saveSession() {
-    // Private tabs are never written to disk.
+    const { tabs, active } = this.sessionData();
+    data.session.data = { ...data.session.data, tabs, active };
+    data.session.save();
+  }
+
+  /** This window's tabs and active index, for the session file (private tabs are never saved). */
+  sessionData() {
     const kept = this.tabs.filter((t) => !t.private);
     const tabs = kept.map((t) => {
       let entries = t.entries;
@@ -419,8 +425,7 @@ class TabManager {
       }
       return { url: t.url, title: t.title, favicon: t.favicon, entries, entryIndex };
     });
-    data.session.data = { tabs, active: Math.max(0, kept.indexOf(this.active)) };
-    data.session.save();
+    return { tabs, active: Math.max(0, kept.indexOf(this.active)) };
   }
 
   destroy() {

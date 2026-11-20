@@ -220,7 +220,6 @@ function createWindow() {
   const b = s.windowBounds || {};
   const state = { win: null, ui: null, overlay: null, tabs: null };
   winStates.push(state);
-  const prevW = W;
   W = state;
   W.win = new BrowserWindow({
     width: b.width || 1360,
@@ -280,13 +279,15 @@ function createWindow() {
     data.settings.data.maximized = state.win.isMaximized();
     data.settings.data.windowBounds = state.win.getNormalBounds();
     data.settings.save();
-    state.tabs.saveSession();
+    saveAllSessions();
   }));
   W.win.on('closed', bind(() => {
     state.tabs.destroy();
     state.win = null;
     const i = winStates.indexOf(state);
     if (i >= 0) winStates.splice(i, 1);
+    // If the closed window was the current one, hand "current" to a window still open.
+    if (W === state) W = winStates[winStates.length - 1] || state;
   }));
 
   const hooks = {
@@ -298,7 +299,7 @@ function createWindow() {
       W.overlay.update('sidebar', { ...snap, titles: peekTitles() });
       // Session snapshots walk every tab's history, so keep them rare.
       clearTimeout(sessionTimer);
-      sessionTimer = setTimeout(() => W.tabs && W.tabs.saveSession(), 2000);
+      sessionTimer = setTimeout(saveAllSessions, 2000);
     },
     activated: (tab) => {
       if (ext) ext.tabSelected(tab);
@@ -353,9 +354,9 @@ function createWindow() {
   // Each hook runs against this window's own state.
   const boundHooks = Object.fromEntries(Object.entries(hooks).map(([k, fn]) => [k, bind(fn)]));
   W.tabs = new TabManager(W.win, webSession, boundHooks);
-  // The window just created is the one in front; it stays current after setup.
-  if (!prevW.win || prevW.win.isDestroyed()) W = state;
-  else W = prevW;
+  // Leave the new window current: it's the one in front after it's created.
+  W = state;
+  return state;
 }
 
 // ---------------------------------------------------------------------------
@@ -470,7 +471,8 @@ function onInput(e, input, tab) {
   let handled = true;
 
   if (ctrl && !alt) {
-    if (key === 't' && !shift) W.tabs.create();
+    if (key === 'n' && !shift && data.settings.data.experimental) openNewWindow();
+  else if (key === 't' && !shift) W.tabs.create();
     else if (key === 'n' && shift) W.tabs.create({ private: true });
     else if (key === 't' && shift) W.tabs.reopenClosed();
     else if ((key === 'w' && !shift) || key === 'F4') W.tabs.active && W.tabs.close(W.tabs.activeId);
@@ -1387,6 +1389,7 @@ function runCommand(e, kind, type, p) {
     case 'shield:menu': shieldMenu(p.rect); break;
     case 'app:menu': showMenu(p.x, p.y, [
       { label: 'New tab', accel: 'Ctrl+T', action: () => W.tabs.create() },
+      ...(data.settings.data.experimental ? [{ label: 'New window', accel: 'Ctrl+N', action: () => openNewWindow() }] : []),
     { label: 'New private tab', accel: 'Ctrl+Shift+N', action: () => W.tabs.create({ private: true }) },
       { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', disabled: !W.tabs.closed.length, action: () => W.tabs.reopenClosed() },
       { sep: true },
@@ -1419,7 +1422,7 @@ function runCommand(e, kind, type, p) {
     case 'settings:open': openSettings(p.section); break;
     case 'app:relaunch':
       // Applies settings that need a restart (e.g. extensions).
-      W.tabs.saveSession();
+      saveAllSessions();
       data.Store.flushAll();
       app.relaunch();
       app.quit();
@@ -1536,11 +1539,44 @@ function urlsFromArgv(argv) {
   return out;
 }
 
+/**
+ * Save every open window. The first window keeps the `tabs` key that older
+ * builds read; any other windows go under `windows`.
+ */
+function saveAllSessions() {
+  const [first, ...rest] = winStates.filter((s) => s.tabs);
+  if (!first) return;
+  const main = first.tabs.sessionData();
+  const others = rest.map((s) => s.tabs.sessionData()).filter((d) => d.tabs.length);
+  data.session.data = { ...data.session.data, tabs: main.tabs, active: main.active, windows: others };
+  data.session.save();
+}
+
+/** Open another Coffee window with its own tabs (experimental). */
+function openNewWindow(url) {
+  if (!openEmptyWindow()) return false;
+  W.tabs.create({ url: url || NEWTAB });
+  return true;
+}
+
+/** A window with no tabs yet (used when restoring a session). */
+function openEmptyWindow() {
+  if (!data.settings.data.experimental) return false;
+  createWindow();
+  return true;
+}
+
 app.on('second-instance', (_e, argv) => {
+  const urls = urlsFromArgv(argv);
+  // A second launch opens a new window when experimental multi-window is on;
+  // otherwise it reuses the one window, as before.
+  if (data.settings.data.experimental && winStates.length && urls.length) {
+    for (const u of urls) openNewWindow(u);
+    return;
+  }
   if (!W.win) return;
   if (W.win.isMinimized()) W.win.restore();
   W.win.focus();
-  const urls = urlsFromArgv(argv);
   for (const u of urls) W.tabs.create({ url: u });
 });
 
@@ -1585,9 +1621,24 @@ app.whenReady().then(async () => {
   // First run: open the welcome setup (theme, tabs, search engine...).
   if (!data.settings.data.onboarded) W.tabs.create({ url: 'coffee://welcome/' });
   else if (!W.tabs.active) W.tabs.activate(W.tabs.tabs[0].id);
+
+  // Other windows from the last session come back only with experimental on.
+  if (data.settings.data.experimental && data.settings.data.restoreSession && Array.isArray(saved.windows)) {
+    const first = W;
+    for (const w of saved.windows) {
+      if (!openEmptyWindow()) break;
+      for (const t of w.tabs || []) {
+        if (String(t.url || '').startsWith('coffee://welcome')) continue;
+        W.tabs.create({ background: true, init: { url: t.url || NEWTAB, title: t.title, favicon: t.favicon, entries: t.entries, entryIndex: t.entryIndex } });
+      }
+      const target = W.tabs.tabs[Math.min(w.active || 0, W.tabs.tabs.length - 1)];
+      if (target) W.tabs.activate(target.id);
+    }
+    W = first;
+  }
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => { if (!winStates.length) app.quit(); });
 app.on('before-quit', () => data.Store.flushAll());
 app.on('will-quit', () => data.Store.flushAll());
 
