@@ -1,8 +1,9 @@
 'use strict';
+const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const {
-  app, BrowserWindow, session, ipcMain, protocol, net, nativeTheme, clipboard, dialog, shell, screen,
+  app, BrowserWindow, session, ipcMain, protocol, net, nativeTheme, clipboard, dialog, shell, screen, safeStorage,
 } = require('electron');
 
 const data = require('./data');
@@ -1975,8 +1976,12 @@ function runCommand(e, kind, type, p) {
     case 'tab:drop-index': if (tabDrag && tabDrag.target === W) tabDrag.targetIndex = Number.isFinite(p.index) ? p.index : null; break;
     case 'update:install':
       // Installing quits the app: keep every window in the saved session.
-      if (updater.status.state === 'ready') { saveAllSessions(); quitting = true; }
-      updater.install();
+      if (updater.status.state !== 'ready') break;
+      saveAllSessions();
+      quitting = true;
+      // The installer closes Coffee and forces it after about a second, so
+      // get sign-ins onto disk before it starts.
+      prepareToQuit().finally(() => { preparedToQuit = true; updater.install(); });
       break;
     case 'update:check': updater.check(); break;
     case 'tab:mute': {
@@ -2106,10 +2111,11 @@ function runCommand(e, kind, type, p) {
     case 'history:delete': data.deleteHistory(Array.isArray(p.urls) ? p.urls.slice(0, 1000) : []); break;
     case 'history:clear-range': data.clearHistoryRange(String(p.range || '')); break;
     case 'history:clear-site': data.clearHistorySite(p.site); break;
-    case 'cookies:clear-site': clearSiteData(p.site).catch(() => {}); break;
+    case 'cookies:clear-site': clearSiteData(p.site).catch(() => {}).then(saveSessionCookies); break;
     case 'adblock:allow': setAdblockException(p.site, !!p.allow); break;
     case 'browser:set-default': openDefaultBrowserSettings(); break;
     case 'data:clear':
+      fs.rmSync(sessionCookiesFile(), { force: true }); // saved sign-ins go too
       webSession.clearStorageData().catch(() => {});
       webSession.clearCache().catch(() => {});
       break;
@@ -2583,6 +2589,67 @@ app.on('second-instance', (_e, argv) => {
 
 app.setAppUserModelId('app.coffee.browser');
 
+// ---------------------------------------------------------------------------
+// Staying signed in across restarts and updates
+// ---------------------------------------------------------------------------
+// Sites often sign you in only "until the browser closes" (a session cookie:
+// what you get when you don't tick "Remember me"). Electron drops those on
+// every restart; Chrome keeps them while it brings your tabs back. Coffee does
+// the same: with "Restore tabs" on, they're saved when Coffee quits (and every
+// couple of minutes, in case it doesn't get to), encrypted with the same key
+// as the cookie store, and put back on the next start.
+//
+// Separately, the cookie store writes changes to disk only every 30 seconds or
+// so; Coffee writes them out before it quits, so a quick restart (an update
+// closes Coffee and may force it after a second) loses nothing.
+
+const sessionCookiesFile = () => path.join(app.getPath('userData'), 'session-cookies.bin');
+
+async function saveSessionCookies() {
+  const file = sessionCookiesFile();
+  try {
+    if (!webSession || !data.settings.data.restoreSession || !safeStorage.isEncryptionAvailable()) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    const list = (await webSession.cookies.get({ session: true })).map((c) => ({
+      name: c.name, value: c.value, domain: c.domain, hostOnly: c.hostOnly, path: c.path,
+      secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
+    }));
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, safeStorage.encryptString(JSON.stringify(list)));
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    console.error('Could not save sign-ins:', err.message);
+  }
+}
+
+/** Put back the sign-ins saved last time (they stay session cookies). */
+async function restoreSessionCookies() {
+  const file = sessionCookiesFile();
+  let list = [];
+  try {
+    if (!data.settings.data.restoreSession || !fs.existsSync(file) || !safeStorage.isEncryptionAvailable()) return;
+    list = JSON.parse(safeStorage.decryptString(fs.readFileSync(file)));
+  } catch { return; } // unreadable (e.g. a different Windows user): start fresh
+  if (!Array.isArray(list)) return;
+  await Promise.all(list.map((c) => webSession.cookies.set({
+    url: `${c.secure ? 'https' : 'http'}://${String(c.domain || '').replace(/^\./, '')}${c.path || '/'}`,
+    name: c.name, value: c.value, path: c.path, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
+    ...(c.hostOnly ? {} : { domain: c.domain }),
+  }).catch(() => { /* a cookie the site has since replaced or that's no longer valid */ })));
+}
+
+/** Everything that must reach the disk before Coffee closes (bounded, so quitting never hangs). */
+function prepareToQuit() {
+  const work = Promise.all([
+    saveSessionCookies(),
+    webSession ? webSession.cookies.flushStore().catch(() => {}) : null,
+  ]);
+  return Promise.race([work, new Promise((r) => setTimeout(r, 1500))]);
+}
+let preparedToQuit = false;
+
 app.whenReady().then(async () => {
   nativeTheme.themeSource = theme.mode;
   webSession = session.fromPartition('persist:web');
@@ -2603,8 +2670,13 @@ app.whenReady().then(async () => {
     startExtensions().catch((err) => console.error('Extensions failed to start:', err));
   }
 
+  // Sign-ins from last time are back before any tab loads.
+  const signedIn = restoreSessionCookies();
+  setInterval(saveSessionCookies, 2 * 60 * 1000);
+
   // Give the blocker a moment so the first page loads with blocking on.
   await Promise.race([blockerReady, new Promise((r) => setTimeout(r, 1200))]);
+  await signedIn;
 
   const saved = data.session.data;
   const argvUrls = urlsFromArgv(process.argv);
@@ -2648,12 +2720,18 @@ app.whenReady().then(async () => {
 
 // A popped-out video keeps the app running after its last window closes, until the video is closed.
 app.on('window-all-closed', () => { if (!winStates.length && !pipKept.size) app.quit(); });
-app.on('before-quit', () => {
+app.on('before-quit', (e) => {
   // Save every window now: they close one at a time while quitting, and each
   // close would otherwise save a session missing the windows closed before it.
   if (!quitting) saveAllSessions();
   quitting = true;
   data.Store.flushAll();
+  // Keep sign-ins: hold the quit until cookies are on disk (at most 1.5 s).
+  if (!preparedToQuit && webSession) {
+    e.preventDefault();
+    preparedToQuit = true;
+    prepareToQuit().finally(() => app.quit());
+  }
 });
 app.on('will-quit', () => data.Store.flushAll());
 
