@@ -74,4 +74,33 @@ const { ipcRenderer, webFrame } = require('electron');
 
   // Separate sources, compiled independently: one failing fix can't disable another.
   try { webFrame.executeJavaScriptInIsolatedWorld(0, scripts.map((code) => ({ code }))); } catch { /* ignore */ }
+
+})();
+
+// Outside the http(s)-only fixes above: local files can be saved too.
+(() => {
+  // --- Alt+click a link: open it in Glance (a floating preview) --------------
+  // (Like Zen browser.) Only real clicks; an editable field keeps Alt+click.
+  if (location.protocol !== 'coffee:') addEventListener('click', (e) => {
+    if (!e.isTrusted || e.button !== 0 || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const a = e.composedPath().find((n) => n && n.tagName === 'A' && n.href);
+    if (!a || !/^https?:/i.test(a.href) || a.isContentEditable) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const r = a.getBoundingClientRect();
+    // Glance grows from the link (in the top page's coordinates when this is a frame).
+    const rect = window === top ? { x: r.left, y: r.top, width: r.width, height: r.height } : null;
+    ipcRenderer.send('glance:open', { url: a.href, rect });
+  }, true);
+
+  // --- Ctrl+S: the page first, like Chrome ------------------------------------
+  // Web apps (editors, design tools) use Ctrl+S for their own Save. Only when
+  // the page leaves it alone does the browser open Save page as. Registered at
+  // document start, so it runs before the page's own listeners; the check
+  // waits until they've all had their turn. Only real key presses count, so a
+  // page can't open the save dialog with a synthetic event.
+  if (location.protocol !== 'coffee:') addEventListener('keydown', (e) => {
+    if (!e.isTrusted || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== 's') return;
+    setTimeout(() => { if (!e.defaultPrevented) ipcRenderer.send('page:save-shortcut'); });
+  });
 })();

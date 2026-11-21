@@ -6,7 +6,10 @@
   --surface: #211a15;
   --text: #efe4d8;
   --accent: #c89b6d;
+  --accent-2: var(--accent);
   --on-accent: #141414;
+  /* Accent highlights: a gradient when the theme has a second accent. */
+  --accent-grad: linear-gradient(90deg, var(--accent), var(--accent-2));
 
   --muted: color-mix(in srgb, var(--text) 56%, var(--bg));
   --faint: color-mix(in srgb, var(--text) 32%, var(--bg));

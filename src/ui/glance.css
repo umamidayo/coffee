@@ -1,0 +1,53 @@
+/* Glance: the dimmed page behind, and the bar and frame around the preview. */
+html, body { background: transparent !important; height: 100%; overflow: hidden; user-select: none; }
+body { cursor: default; }
+
+#backdrop {
+  position: absolute; inset: 0;
+  background: color-mix(in srgb, var(--bg) 55%, rgb(0 0 0 / .45));
+  opacity: 0; transition: opacity .22s var(--ease);
+}
+body.open #backdrop { opacity: 1; }
+body.closing #backdrop { opacity: 0; transition-duration: .14s; }
+
+#frame {
+  position: absolute; border-radius: 14px; overflow: hidden;
+  background: var(--raised);
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / .65), 0 8px 24px -8px rgb(0 0 0 / .35), 0 0 0 1px var(--line);
+  opacity: 0; transform: translateY(10px) scale(.985);
+  transition: opacity .2s var(--ease), transform .28s var(--spring);
+}
+body.open #frame { opacity: 1; transform: none; }
+body.closing #frame { opacity: 0; transform: scale(.97); transition: opacity .12s, transform .14s var(--ease); }
+
+#bar { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 6px 0 6px; }
+#what { margin-left: 4px; }
+#bar .nav { min-width: 30px; width: 30px; padding: 0; }
+#bar .nav:disabled { opacity: .35; pointer-events: none; }
+#reload { margin-right: 6px; }
+#ico { width: 18px; height: 18px; flex: none; display: grid; place-items: center; color: var(--muted); }
+#ico img { width: 16px; height: 16px; border-radius: 3px; }
+#ico svg { width: 16px; height: 16px; }
+#what { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+#title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#host { color: var(--muted); font-size: 12px; white-space: nowrap; flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; }
+
+.act {
+  height: 30px; min-width: 30px; padding: 0 8px; border: 0; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: none; color: var(--muted); font: 500 12.5px var(--font); transition: background .15s, color .15s;
+}
+.act svg { width: 15px; height: 15px; }
+.act:hover { background: var(--hover); color: var(--text); }
+.act:active { background: var(--press); }
+#tab { background: var(--accent-soft); color: var(--text); padding: 0 12px 0 10px; }
+#tab:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
+/* A thin loading line under the bar. */
+#progress {
+  position: absolute; left: 0; right: 0; top: 43px; height: 2px; opacity: 0;
+  background: linear-gradient(90deg, transparent, var(--accent), var(--accent-2), transparent);
+  background-size: 50% 100%; background-repeat: no-repeat;
+  transition: opacity .2s;
+}
+body.loading #progress { opacity: 1; animation: glance-load 1.1s linear infinite; }
+@keyframes glance-load { from { background-position: -50% 0; } to { background-position: 150% 0; } }

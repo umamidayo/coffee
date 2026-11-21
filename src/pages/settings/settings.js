@@ -114,7 +114,10 @@
   // Appearance
   // =====================================================================
   function preview(p) {
-    return `<div class="preview" style="background:${p.bg}">
+    // The frame (sidebar + toolbar) can have its own color or gradient; the page area shows the base colors.
+    const frame = p.frame2 ? `linear-gradient(${p.angle ?? 135}deg, ${p.frame || p.bg}, ${p.frame2})` : (p.frame || p.bg);
+    const accent = p.accent2 ? `linear-gradient(135deg, ${p.accent}, ${p.accent2})` : p.accent;
+    return `<div class="preview" style="background:${frame}">
       <div class="pv-side"><i style="background:${p.accent}"></i><i style="background:${p.text}"></i><i style="background:${p.text}"></i></div>
       <div class="pv-main">
         <div class="pv-top"><div class="pv-omni" style="background:${p.text}"></div></div>
@@ -123,11 +126,75 @@
           <div class="pv-line short" style="background:${p.text}"></div>
         </div>
       </div>
-      <div class="pv-dot" style="background:${p.accent}"></div>
+      <div class="pv-dot" style="background:${accent}"></div>
     </div>`;
   }
 
+  // Your own themes are saved themes: picking one shows its editor, and every
+  // change is applied and saved as you make it.
   const SAVED_PREFIX = 'saved:';
+  const PENCIL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>';
+  const editingId = () => (s.theme.preset.startsWith(SAVED_PREFIX) ? s.theme.preset.slice(SAVED_PREFIX.length) : null);
+  const editing = () => (s.theme.saved || []).find((t) => t.id === editingId()) || null;
+
+  // Settings come back from the browser after each change; while edits are in
+  // flight those copies can be a step behind, so the page's own theme wins
+  // until things settle (see the 'settings' listener).
+  let themeEditedAt = 0;
+  function applyTheme(next) {
+    themeEditedAt = Date.now();
+    s.theme = next;
+    set('theme', s.theme);
+  }
+
+  /** Ask first: resolves true to go ahead. Cancel is focused, so Enter alone doesn't delete. */
+  function confirmDialog({ title, text, ok = 'Delete', swatch = null }) {
+    const m = $('confirm');
+    $('confirmTitle').textContent = title;
+    $('confirmText').textContent = text;
+    $('confirmYes').textContent = ok;
+    $('confirmSwatch').hidden = !swatch;
+    if (swatch) $('confirmSwatch').innerHTML = swatch;
+    m.hidden = false;
+    m.classList.remove('leave');
+    const last = document.activeElement;
+    requestAnimationFrame(() => $('confirmNo').focus());
+    return new Promise((resolve) => {
+      const done = (yes) => {
+        m.classList.add('leave');
+        setTimeout(() => { m.hidden = true; m.classList.remove('leave'); }, 140);
+        document.removeEventListener('keydown', onKey, true);
+        if (last && last.focus && !yes) last.focus();
+        resolve(yes);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+        else if (e.key === 'Tab') { e.preventDefault(); (document.activeElement === $('confirmNo') ? $('confirmYes') : $('confirmNo')).focus(); }
+      };
+      document.addEventListener('keydown', onKey, true);
+      $('confirmNo').onclick = () => done(false);
+      $('confirmYes').onclick = () => done(true);
+      m.onmousedown = (e) => { if (e.target === m) done(false); };
+    });
+  }
+
+  async function deleteSaved(id) {
+    const t = (s.theme.saved || []).find((x) => x.id === id);
+    if (!t) return;
+    const yes = await confirmDialog({
+      title: `Delete “${t.name}”?`,
+      text: "This theme will be gone for good. You can't undo this.",
+      ok: 'Delete theme',
+      swatch: preview(t),
+    });
+    if (!yes) return;
+    const left = s.theme.saved.filter((x) => x.id !== id);
+    const preset = s.theme.preset === `${SAVED_PREFIX}${id}` ? 'coffee' : s.theme.preset;
+    applyTheme({ ...s.theme, saved: left, preset });
+    toast(`Deleted “${t.name}”`);
+    renderThemes();
+  }
+
   function renderThemes() {
     const wrap = $('themes');
     wrap.textContent = '';
@@ -137,82 +204,208 @@
       const b = document.createElement('button');
       b.className = `theme${current === p.id ? ' on' : ''}`;
       b.innerHTML = `${preview(p)}<div class="label"><span>${p.name}</span>${CHECK}</div>`;
-      b.onclick = () => {
-        s.theme = { ...s.theme, preset: p.id };
-        set('theme', s.theme);
-        renderThemes();
-      };
+      // A preset is a starting point: "Customize" makes your own copy of it to change.
+      const acts = document.createElement('span');
+      acts.className = 'theme-acts';
+      const copy = Object.assign(document.createElement('span'), { className: 'theme-act', title: `Customize: make your own copy of ${p.name}`, innerHTML: PENCIL });
+      copy.setAttribute('role', 'button');
+      copy.setAttribute('aria-label', `Customize ${p.name}`);
+      copy.onclick = (e) => { e.stopPropagation(); createFrom(p, `${p.name} (custom)`); };
+      acts.appendChild(copy);
+      b.appendChild(acts);
+      b.onclick = () => { applyTheme({ ...s.theme, preset: p.id }); renderThemes(); };
       wrap.appendChild(b);
     }
     for (const t of saved) {
       const id = `${SAVED_PREFIX}${t.id}`;
       const b = document.createElement('button');
-      b.className = `theme${current === id ? ' on' : ''}`;
+      b.className = `theme mine${current === id ? ' on' : ''}`;
       b.innerHTML = `${preview(t)}<div class="label"><span></span>${CHECK}</div>`;
       b.querySelector('.label span').textContent = t.name;
-      const x = Object.assign(document.createElement('span'), { className: 'theme-del', title: 'Delete this theme', textContent: '×' });
-      x.setAttribute('role', 'button');
-      x.setAttribute('aria-label', `Delete ${t.name}`);
-      x.onclick = (e) => {
+      const acts = document.createElement('span');
+      acts.className = 'theme-acts';
+      const edit = Object.assign(document.createElement('span'), { className: 'theme-act', title: 'Edit this theme', innerHTML: PENCIL });
+      const del = Object.assign(document.createElement('span'), { className: 'theme-act del', title: 'Delete this theme', textContent: '×' });
+      for (const [el, label] of [[edit, `Edit ${t.name}`], [del, `Delete ${t.name}`]]) {
+        el.setAttribute('role', 'button');
+        el.setAttribute('aria-label', label);
+      }
+      edit.onclick = (e) => {
         e.stopPropagation();
-        const left = saved.filter((y) => y.id !== t.id);
-        s.theme = { ...s.theme, saved: left, preset: current === id ? 'coffee' : current };
-        set('theme', s.theme);
+        if (current !== id) applyTheme({ ...s.theme, preset: id });
         renderThemes();
+        $('custom').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        $('themeName').focus();
       };
-      b.appendChild(x);
-      b.onclick = () => {
-        s.theme = { ...s.theme, preset: id };
-        set('theme', s.theme);
-        renderThemes();
-      };
+      del.onclick = (e) => { e.stopPropagation(); deleteSaved(t.id); };
+      acts.append(edit, del);
+      b.appendChild(acts);
+      b.onclick = () => { applyTheme({ ...s.theme, preset: id }); renderThemes(); };
       wrap.appendChild(b);
     }
+    // "New theme": a saved theme straight away, starting from the colors in use now.
     const c = document.createElement('button');
-    c.className = `theme custom-card${current === 'custom' ? ' on' : ''}`;
-    c.innerHTML = `<div class="preview"></div><div class="label"><span>Custom</span>${CHECK}</div>`;
-    c.onclick = () => {
-      // Start the custom theme from whatever is active now.
-      const base = s.theme.custom || s.presets.find((p) => p.id === s.theme.preset) || s.presets[0];
-      s.theme = { ...s.theme, preset: 'custom', custom: { bg: base.bg, surface: base.surface, text: base.text, accent: base.accent } };
-      set('theme', s.theme);
-      renderThemes();
-    };
+    c.className = 'theme custom-card';
+    c.disabled = saved.length >= 24;
+    c.title = c.disabled ? 'You can keep up to 24 themes. Delete one to make another.' : '';
+    c.innerHTML = '<div class="preview"></div><div class="label"><span>New theme</span></div>';
+    c.onclick = () => createFrom(editing() || s.presets.find((p) => p.id === s.theme.preset) || s.presets[0], `My theme ${saved.length + 1}`);
     wrap.appendChild(c);
-
-    const editor = $('custom');
-    editor.hidden = current !== 'custom';
-    if (current === 'custom' && s.theme.custom) {
-      for (const input of editor.querySelectorAll('input[type=color]')) input.value = s.theme.custom[input.dataset.k];
-    }
+    renderEditor();
   }
 
-  // Save the custom colors as a named theme; the list is capped on the main side.
-  function saveCustomTheme() {
-    const name = $('themeName').value.trim();
-    const c = s.theme.custom;
-    if (!c) return;
+  /** A new theme of your own, starting from `base` (a preset or one of yours), opened in the editor. */
+  function createFrom(base, name) {
+    const saved = s.theme.saved || [];
+    if (saved.length >= 24) { toast('You can keep up to 24 themes. Delete one to make another.'); return; }
+    const { id: _i, name: _n, mode: _m, ...colors } = base;
     const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    const entry = { id, name: name || `My theme ${(s.theme.saved || []).length + 1}`, ...c };
-    const saved = [...(s.theme.saved || []), entry].slice(-24);
-    s.theme = { ...s.theme, saved, preset: `${SAVED_PREFIX}${id}` };
-    $('themeName').value = '';
-    set('theme', s.theme);
-    toast(`Saved “${entry.name}”`);
+    const used = new Set(saved.map((t) => t.name));
+    let unique = name.slice(0, 32);
+    for (let n = 2; used.has(unique); n++) unique = `${name.slice(0, 28)} ${n}`;
+    applyTheme({ ...s.theme, saved: [...saved, { ...colors, id, name: unique }], preset: `${SAVED_PREFIX}${id}` });
     renderThemes();
+    $('custom').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    $('themeName').focus();
+    $('themeName').select();
   }
-  $('saveTheme').onclick = saveCustomTheme;
-  $('themeName').onkeydown = (e) => { if (e.key === 'Enter') saveCustomTheme(); };
 
-  // Live preview while dragging the color picker, throttled to one update per frame.
+  // ---- the editor ----
+  function renderEditor() {
+    const t = editing();
+    const ed = $('custom');
+    ed.hidden = !t;
+    if (!t) return;
+    if (document.activeElement !== $('themeName')) $('themeName').value = t.name;
+    for (const input of ed.querySelectorAll('input[type=color]')) {
+      const k = input.dataset.k;
+      // Extras without a value start from a sensible color.
+      input.value = t[k] || (k === 'frame' ? t.bg : k === 'frame2' ? t.accent : k === 'accent2' ? t.accent : '#000000');
+      const hex = input.closest('.swatch-wrap')?.querySelector('.hex');
+      if (hex && document.activeElement !== hex) { hex.value = input.value; hex.classList.remove('bad'); }
+    }
+    const mode = t.frame2 ? 'gradient' : t.frame ? 'solid' : 'same';
+    for (const b of document.querySelectorAll('#frameMode button')) b.classList.toggle('on', b.dataset.v === mode);
+    $('frameColors').hidden = mode === 'same';
+    $('frame2Swatch').hidden = mode !== 'gradient';
+    $('angleCtl').hidden = mode !== 'gradient';
+    $('frameLabel').textContent = mode === 'gradient' ? 'From' : 'Frame';
+    $('frameAngle').value = String(t.angle ?? 135);
+    $('angleVal').textContent = `${t.angle ?? 135}°`;
+    $('accent2On').checked = !!t.accent2;
+    $('accent2Colors').hidden = !t.accent2;
+  }
+
+  /** Change the theme being edited; applied (and saved) once per frame while dragging a picker. */
   let raf = 0;
+  function updateEditing(patch, { now = false } = {}) {
+    const t = editing();
+    if (!t) return;
+    const next = { ...t, ...patch };
+    for (const [k, v] of Object.entries(patch)) if (v === null) delete next[k];
+    themeEditedAt = Date.now();
+    s.theme = { ...s.theme, saved: s.theme.saved.map((x) => (x.id === t.id ? next : x)) };
+    const push = () => { raf = 0; themeEditedAt = Date.now(); set('theme', s.theme); };
+    if (now) { cancelAnimationFrame(raf); push(); renderThemes(); return; }
+    if (!raf) raf = requestAnimationFrame(push);
+  }
+
   for (const input of document.querySelectorAll('#custom input[type=color]')) {
     input.addEventListener('input', () => {
-      s.theme.custom = { ...s.theme.custom, [input.dataset.k]: input.value };
-      if (raf) return;
-      raf = requestAnimationFrame(() => { raf = 0; set('theme', { preset: 'custom', custom: s.theme.custom }); });
+      updateEditing({ [input.dataset.k]: input.value });
+      const hex = input.closest('.swatch-wrap')?.querySelector('.hex');
+      if (hex && document.activeElement !== hex) { hex.value = input.value; hex.classList.remove('bad'); }
     });
+    // Refresh the card previews once the picker is let go (not on every step).
+    input.addEventListener('change', () => renderThemes());
   }
+
+  // ---- copy & paste colors ----
+  // Every color gets its hex code (type or paste into it) and Copy / Paste
+  // buttons that use the system clipboard, so a color can go from one part of
+  // the theme to another, or come in from anywhere else (#hex, #abc, rgb()).
+  /** A color in text form, as #rrggbb, or null. */
+  function parseColor(text) {
+    const t = String(text || '').trim().toLowerCase();
+    let m = t.match(/^#?([0-9a-f]{6})$/);
+    if (m) return `#${m[1]}`;
+    m = t.match(/^#?([0-9a-f]{3})$/);
+    if (m) return `#${m[1].split('').map((c) => c + c).join('')}`;
+    m = t.match(/^rgba?\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})/);
+    if (m && m.slice(1, 4).every((v) => Number(v) <= 255)) return `#${m.slice(1, 4).map((v) => Number(v).toString(16).padStart(2, '0')).join('')}`;
+    return null;
+  }
+  const COPY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8"/></svg>';
+  const PASTE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="16" rx="2"/><path d="M9 5V3.5h6V5"/><path d="M9 12h6M9 16h4"/></svg>';
+  for (const label of document.querySelectorAll('#custom label.swatch')) {
+    const input = label.querySelector('input[type=color]');
+    const name = label.querySelector('span').textContent;
+    // The label opens the picker, so the extra controls sit beside it, not inside it.
+    const wrap = document.createElement('div');
+    wrap.className = 'swatch-wrap';
+    if (label.id) { wrap.id = label.id; label.removeAttribute('id'); }
+    label.replaceWith(wrap);
+    wrap.appendChild(label);
+    const row = document.createElement('div');
+    row.className = 'hexrow';
+    row.innerHTML = `<input class="hex" type="text" maxlength="24" spellcheck="false" autocomplete="off" aria-label="${name} color code">`
+      + `<button class="mini" data-act="copy" title="Copy ${name} color">${COPY_ICON}</button>`
+      + `<button class="mini" data-act="paste" title="Paste a color into ${name}">${PASTE_ICON}</button>`;
+    wrap.appendChild(row);
+    const hex = row.querySelector('.hex');
+    const set = (color) => {
+      input.value = color;
+      hex.value = color;
+      hex.classList.remove('bad');
+      input.dispatchEvent(new Event('input'));
+      input.dispatchEvent(new Event('change'));
+    };
+    hex.addEventListener('input', () => {
+      const c = parseColor(hex.value);
+      hex.classList.toggle('bad', !c && hex.value.trim() !== '');
+      if (c) { input.value = c; input.dispatchEvent(new Event('input')); }
+    });
+    hex.addEventListener('blur', () => { hex.value = input.value; hex.classList.remove('bad'); renderThemes(); });
+    hex.addEventListener('keydown', (e) => { if (e.key === 'Enter') hex.blur(); });
+    row.querySelector('[data-act=copy]').onclick = () => {
+      api.send('clipboard:write-text', { text: input.value });
+      toast(`Copied ${input.value}`);
+    };
+    row.querySelector('[data-act=paste]').onclick = async () => {
+      const text = await api.invoke('clipboard:read-text').catch(() => '');
+      const c = parseColor(text);
+      if (!c) { toast(text ? `“${String(text).slice(0, 24)}” isn't a color` : 'Copy a color first'); return; }
+      set(c);
+      toast(`Pasted ${c} into ${name}`);
+    };
+  }
+  $('themeName').addEventListener('input', () => {
+    const name = $('themeName').value.replace(/\s+/g, ' ').trimStart().slice(0, 32);
+    updateEditing({ name: name || 'My theme' });
+    const card = document.querySelector('#themes .theme.mine.on .label span');
+    if (card) card.textContent = name || 'My theme';
+  });
+  $('themeName').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('themeName').blur(); });
+  $('deleteTheme').onclick = () => { const t = editing(); if (t) deleteSaved(t.id); };
+  for (const b of document.querySelectorAll('#frameMode button')) {
+    b.onclick = () => {
+      const t = editing();
+      if (!t) return;
+      if (b.dataset.v === 'same') updateEditing({ frame: null, frame2: null, angle: null }, { now: true });
+      else if (b.dataset.v === 'solid') updateEditing({ frame: t.frame || $('custom').querySelector('[data-k=frame]').value, frame2: null, angle: null }, { now: true });
+      else updateEditing({ frame: t.frame || t.bg, frame2: t.frame2 || t.accent, angle: t.angle ?? 135 }, { now: true });
+    };
+  }
+  $('frameAngle').addEventListener('input', () => {
+    $('angleVal').textContent = `${$('frameAngle').value}°`;
+    updateEditing({ angle: Number($('frameAngle').value) });
+  });
+  $('frameAngle').addEventListener('change', () => renderThemes());
+  $('accent2On').onchange = () => {
+    const t = editing();
+    if (!t) return;
+    updateEditing({ accent2: $('accent2On').checked ? (t.accent2 || $('custom').querySelector('[data-k=accent2]').value) : null }, { now: true });
+  };
 
   // =====================================================================
   // Render everything from the current settings
@@ -430,8 +623,11 @@
   checkDefaultBrowser();
 
   api.on('settings', (next) => {
-    const editingCustom = s && s.theme.preset === 'custom' && document.activeElement && document.activeElement.type === 'color';
+    // Don't redraw the theme editor under a color picker or the name field mid-edit.
+    const editingCustom = s && document.activeElement && (document.activeElement.type === 'color' || document.activeElement.id === 'themeName' || document.activeElement.id === 'frameAngle');
     // Keep the user's not-yet-applied extensions choice while it awaits a restart.
+    // A theme edit made in the last moment beats an older copy coming back.
+    if (s && Date.now() - themeEditedAt < 1000) next = { ...next, theme: s.theme };
     s = next;
     if (!editingCustom) render();
   });

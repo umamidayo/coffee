@@ -8,9 +8,52 @@
   document.body.className = mode;
 
   if (mode === 'hint') {
-    root.innerHTML = '<div class="hint"><span class="label"></span></div>';
-    const hint = root.firstChild;
+    root.innerHTML = '<div class="hint"><span class="label"></span></div>'
+      + `<div class="sp" hidden>
+          <div class="sp-glow"></div><div class="sp-divider"></div>
+          <div class="sp-half" data-half="left"><div class="sp-chip"><span class="sp-ico"></span><span class="sp-title"></span></div><div class="sp-note"></div></div>
+          <div class="sp-half" data-half="right"><div class="sp-chip"><span class="sp-ico"></span><span class="sp-title"></span></div><div class="sp-note"></div></div>
+        </div>`;
+    const hint = root.querySelector('.hint');
+    const sp = root.querySelector('.sp');
+    // Keep frames coming. This window is shown and hidden by the browser, and a
+    // hidden window draws nothing: without frames being asked for, its fade-in
+    // and slide animations never reach the screen (it stayed invisible).
+    const tick = () => requestAnimationFrame(tick);
+    requestAnimationFrame(tick);
+    const icon = (el, t) => {
+      el.textContent = '';
+      el.className = 'sp-ico';
+      if (t.favicon) {
+        const img = new Image();
+        img.alt = '';
+        img.src = t.favicon;
+        img.onerror = () => { img.remove(); el.innerHTML = Icons.globe; };
+        el.appendChild(img);
+      } else if (t.newtab) el.innerHTML = Icons.sparkle;
+      else if (t.letter) { el.textContent = t.letter; el.classList.add('letter'); } else el.innerHTML = Icons.globe;
+    };
+    const fill = (half, t, lands) => {
+      half.classList.toggle('lands', lands);
+      icon(half.querySelector('.sp-ico'), t);
+      half.querySelector('.sp-title').textContent = t.title || 'New Tab';
+      half.querySelector('.sp-note').textContent = lands ? 'Opens here' : 'Stays here';
+    };
     api.on('drag:hint', (h) => {
+      const split = h.kind === 'split' && h.preview;
+      const wasSplit = !sp.hidden && hint.hidden;
+      hint.hidden = !!split;
+      sp.hidden = !split;
+      if (split) {
+        // Split view: the whole page, both halves, the divider; the highlight
+        // slides to the side the tab will land on.
+        const { side, tab, partner } = h.preview;
+        sp.dataset.side = side;
+        fill(sp.querySelector('[data-half=left]'), side === 'left' ? tab : partner, side === 'left');
+        fill(sp.querySelector('[data-half=right]'), side === 'right' ? tab : partner, side === 'right');
+        if (!wasSplit) { sp.classList.remove('show'); void sp.offsetWidth; sp.classList.add('show'); }
+        return;
+      }
       hint.querySelector('.label').textContent = h.label || '';
       // new / place: an outline of the window, where it will open or move to.
       hint.dataset.kind = h.kind || '';
@@ -19,7 +62,9 @@
       void hint.offsetWidth;
       hint.classList.add('show');
     });
-    api.on('drag:end', (e) => hint.classList.add(e.dropped ? 'dropped' : 'gone'));
+    api.on('drag:end', (e) => {
+      for (const el of [hint, sp]) el.classList.add(e.dropped ? 'dropped' : 'gone');
+    });
     return;
   }
 

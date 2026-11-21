@@ -11,6 +11,51 @@
 
 module.exports = [
   {
+    version: '0.1.18',
+    date: '2026-11-20',
+    title: 'Glance, and themes that are yours',
+    sections: [
+      {
+        heading: 'Glance',
+        items: [
+          "Alt+click a link (or right-click it and choose Open link in Glance) to open it in a floating preview over the page, without making a tab.",
+          "Right-click selected text and choose Search to see the results in Glance.",
+          "Glance has Back, Forward and Reload. Open as tab turns it into a tab, keeping the page just as it is, or send it to split view. Esc or a click outside closes it.",
+        ],
+      },
+      {
+        heading: 'Themes',
+        items: [
+          "Make any preset your own: the pencil on its card makes a copy you can change.",
+          "Give your themes a two-tone or gradient frame and a second accent color.",
+          "Copy a color and paste it into another part, or paste one in from anywhere (#hex or rgb).",
+          "Edit or delete your themes any time. Deleting now asks first.",
+          "The presets got a refresh so no two look alike, and there are three new ones: Aurora, Sunset, and Espresso & Cream.",
+        ],
+      },
+      {
+        heading: 'Saving',
+        items: [
+          "Save page as (Ctrl+S): the whole page, a single file, or a PDF. Sites that use Ctrl+S themselves still get it.",
+          "Right-click an image and choose Save image as to pick where it goes. This now works on any image, including ones from image search.",
+        ],
+      },
+      {
+        heading: 'Safer full screen',
+        items: [
+          "When a site goes full screen, a notice shows which site it is and how to leave (Esc), so a full-screen page can't pretend to be something else. Move the pointer to the top edge to see it again.",
+        ],
+      },
+      {
+        heading: 'Fixes',
+        items: [
+          "Dragging a tab onto the page now shows where it will open, side by side with the tab that stays.",
+          "Right-click the title bar, then click elsewhere on it: the menu now closes.",
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.17',
     date: '2026-11-20',
     title: 'Private windows, and a lighter ad blocker',
@@ -97,18 +142,6 @@ module.exports = [
         items: [
           'Sites that keep you signed in "until the browser closes" now stay signed in when Coffee restarts or updates, as long as Restore tabs is on. They\'re saved encrypted, and clearing your browsing data clears them too.',
           'Recent sign-ins are no longer lost when an update installs.',
-        ],
-      },
-    ],
-  },
-  {
-    version: '0.1.14',
-    date: '2026-11-20',
-    title: 'A nicer installer',
-    sections: [
-      {
-        items: [
-          'The setup wizard has Coffee artwork, a new welcome screen, and a finish screen that can open Coffee right away.',
         ],
       },
     ],

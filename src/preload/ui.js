@@ -8,6 +8,8 @@ function applyTheme(t) {
   for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v);
   root.dataset.mode = t.mode;
   root.style.colorScheme = t.mode;
+  // A theme with its own frame color or gradient (two-tone).
+  if (t.frame) root.dataset.frame = 'on'; else delete root.dataset.frame;
 }
 function whenRoot(fn) {
   if (document.documentElement) return fn();

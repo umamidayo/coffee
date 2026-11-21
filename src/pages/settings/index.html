@@ -34,21 +34,44 @@
 
     <main id="content">
       <!-- Appearance -->
-      <section id="appearance" data-keywords="theme colors dark light custom accent bookmarks bar button menu minimal look">
+      <section id="appearance" data-keywords="theme colors dark light custom accent gradient two-tone frame edit delete rename bookmarks bar button menu minimal look">
         <header><h2>Appearance</h2><p>Colors, themes and the bookmarks bar.</p></header>
         <div class="themes" id="themes"></div>
+        <!-- Editor for your own themes: shown while one of them is the active theme. -->
         <div class="custom" id="custom" hidden>
+          <div class="ed-head">
+            <input class="site-input" id="themeName" type="text" maxlength="32" placeholder="Theme name" spellcheck="false" autocomplete="off" aria-label="Theme name">
+            <button class="btn danger" id="deleteTheme">Delete theme</button>
+          </div>
+          <div class="ed-label">Colors</div>
           <div class="custom-grid">
             <label class="swatch"><input type="color" data-k="bg"><span>Background</span></label>
             <label class="swatch"><input type="color" data-k="surface"><span>Surface</span></label>
             <label class="swatch"><input type="color" data-k="text"><span>Text</span></label>
             <label class="swatch"><input type="color" data-k="accent"><span>Accent</span></label>
           </div>
-          <div class="save-theme">
-            <input class="site-input" id="themeName" type="text" maxlength="32" placeholder="Name this theme" spellcheck="false" autocomplete="off">
-            <button class="btn" id="saveTheme">Save as theme</button>
+          <div class="ed-row">
+            <div class="txt"><b>Frame</b><span>The toolbar, tab bar and side bar</span></div>
+            <div class="segmented" id="frameMode">
+              <button data-v="same">Same as background</button>
+              <button data-v="solid">Color</button>
+              <button data-v="gradient">Gradient</button>
+            </div>
           </div>
-          <p class="hint">Pick four colors. Coffee works out every other shade from them. Saved themes appear above.</p>
+          <div class="ed-extra" id="frameColors" hidden>
+            <label class="swatch"><input type="color" data-k="frame"><span id="frameLabel">Frame</span></label>
+            <label class="swatch" id="frame2Swatch"><input type="color" data-k="frame2"><span>Fades to</span></label>
+            <label class="angle" id="angleCtl"><span>Direction</span><input type="range" min="0" max="355" step="5" id="frameAngle"><b id="angleVal"></b></label>
+          </div>
+          <div class="ed-row">
+            <div class="txt"><b>Second accent</b><span>Accent highlights become a gradient: loading bar, switches, buttons, split view</span></div>
+            <label class="switch"><input type="checkbox" id="accent2On"><i></i></label>
+          </div>
+          <div class="ed-extra" id="accent2Colors" hidden>
+            <label class="swatch"><input type="color" data-k="accent2"><span>Second accent</span></label>
+            <div class="accent-demo" aria-hidden="true"></div>
+          </div>
+          <p class="hint">Changes apply as you make them and are saved automatically. Coffee works out every other shade from these colors.</p>
         </div>
         <div class="card">
           <div class="row">
@@ -285,6 +308,15 @@
     </main>
   </div>
   <div class="toast" id="toast"></div>
+  <!-- Asks before something that can't be undone (deleting a theme). -->
+  <div class="modal" id="confirm" hidden>
+    <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmText">
+      <div class="dlg-swatch" id="confirmSwatch"></div>
+      <h3 id="confirmTitle"></h3>
+      <p id="confirmText"></p>
+      <div class="dlg-row"><button class="btn" id="confirmNo">Cancel</button><button class="btn danger-fill" id="confirmYes">Delete</button></div>
+    </div>
+  </div>
   <script src="settings.js"></script>
 </body>
 </html>

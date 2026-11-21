@@ -39,6 +39,10 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - `Ctrl+Enter` turns a word into an address (`coffee` → `www.coffee.com`). `Shift+Delete` removes the highlighted page from your history.
 - Hover a link and its address appears in the bottom corner of the page.
 
+**Glance**
+- `Alt`+click a link (or right-click → **Open link in Glance**) to open it in a floating preview over the page, without making a tab. Right-click selected text → **Search for …** opens the results there too.
+- **Open as tab** (or `Ctrl+Enter`) turns it into a tab, keeping the page as it is; it can also go straight into split view. `Esc` or a click outside closes it.
+
 **Copying links**
 - `Ctrl+Shift+C` copies the address of the page you're on.
 - Right-click a link and choose **Copy clean link** to copy it without tracking parameters (`utm_…`, `fbclid` and the like).
@@ -81,7 +85,10 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - Turn shortcuts off to see just the time and date.
 
 **Also**
-- Themes: Coffee, Latte, Dark, Light, Midnight, Matcha, Rosé, OLED, or make your own from four colors.
+- Themes: Coffee, Latte, Dark, Light, Midnight, Matcha, Rosé, OLED, Nord, Sepia, Forest, Ocean, Aurora, Sunset and Espresso & Cream, or make your own. Start from scratch or from any preset (the pencil on its card), and give it a two-tone or gradient frame and a second accent color. Copy a color from one part and paste it into another, or paste one in from anywhere (`#hex` or `rgb()`). Edit or delete your themes any time.
+- Right-click an image → **Save image as…** works for any image, including ones a page makes itself or that its site won't let other pages link to.
+- When a site goes full screen, a notice names the site and says how to leave (`Esc`), so a full-screen page can't pass itself off as something else. Move the pointer to the top edge to see it again.
+- Save page as (`Ctrl+S`): the complete page, a single `.mhtml` file, or a PDF. Sites that use `Ctrl+S` themselves (online editors) keep it.
 - Downloads panel with progress, pause and resume, and *Show in folder*.
 - Find in page (it starts with the text you selected), zoom, and full screen.
 - Every toolbar button tells you what it does, and its shortcut, when you hover it.
@@ -108,6 +115,7 @@ Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or
 | Back / forward | `Alt+←` / `Alt+→` (or mouse side buttons) |
 | Reload | `Ctrl+R` or `F5` |
 | Find in page | `Ctrl+F` |
+| Save page as | `Ctrl+S` |
 | Bookmark page | `Ctrl+D` |
 | Show/hide bookmarks bar | `Ctrl+Shift+B` |
 | Downloads | `Ctrl+J` |
@@ -129,6 +137,8 @@ npm start           # run from source
 npm run dist        # build the installer into dist/
 npm run release     # publish a new version (bump "version" in package.json, commit, push, set GH_TOKEN)
 ```
+
+Running from source uses its own profile, `%APPDATA%\Coffee (dev)`, so it never touches the installed Coffee's sign-ins (the installed app encrypts its cookies and plain Electron can't read them).
 
 Before a release, add the new version's notes to the top of `src/main/patch-notes.js` and drop the oldest so four remain (the What's new page shows this version and the three before it). `npm run release` stops if the version has no notes.
 

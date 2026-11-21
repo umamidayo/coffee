@@ -91,7 +91,13 @@
     }
     suppressClick = null;
   }, true);
-  api.on('overlay', (type) => { state.overlay = type; });
+  api.on('overlay', (type) => {
+    state.overlay = type;
+    // While a menu or panel is open, the title bar and other drag areas stop
+    // dragging the window: Windows takes clicks there before this page sees
+    // them, so a click on the title bar couldn't close the menu otherwise.
+    document.body.classList.toggle('popup-open', !!type && !['suggest', 'sidebar', 'splitdrag'].includes(type));
+  });
 
   // ---------- window ----------
   $('win-min').onclick = () => api.send('win:minimize');

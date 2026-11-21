@@ -77,7 +77,20 @@
     return t;
   }
 
-  const renderers = { status: renderStatus, tabcard: renderCard, toast: renderToast };
+  // ---------- full screen: which site, and how to leave ----------
+  function renderFsNotice(d) {
+    root.textContent = '';
+    const n = document.createElement('div');
+    n.className = 'fsn';
+    const site = d.host ? `<b class="site"></b> is now full screen` : 'This page is now full screen';
+    n.innerHTML = `<span class="fsn-ico">${Icons.fullscreen}</span><div class="fsn-text"><div class="fsn-what">${site}</div>`
+      + '<div class="fsn-how">Press <kbd>Esc</kbd> to exit full screen</div></div><i class="fsn-time"></i>';
+    if (d.host) n.querySelector('.site').textContent = d.host;
+    root.appendChild(n);
+    return n;
+  }
+
+  const renderers = { status: renderStatus, tabcard: renderCard, toast: renderToast, fsnotice: renderFsNotice };
 
   api.on('float:show', ({ kind, data, seq, update }) => {
     const fn = renderers[kind];

@@ -39,6 +39,21 @@ const settings = new Store('settings', {
 
 // People who used Coffee before the welcome setup existed shouldn't see it.
 if (settings.existed && !settings.loadedKeys.has('onboarded')) settings.data.onboarded = true;
+// The old unsaved "Custom" theme slot couldn't be edited after saving or
+// removed; custom themes are now all saved themes. Keep its colors as one.
+{
+  const th = settings.data.theme;
+  if (th && th.custom && typeof th.custom === 'object') {
+    const saved = Array.isArray(th.saved) ? th.saved : (th.saved = []);
+    const id = `custom${Date.now().toString(36)}`;
+    const same = saved.find((x) => ['bg', 'surface', 'text', 'accent'].every((k) => x[k] === th.custom[k]));
+    if (!same) saved.push({ id, name: 'Custom', bg: th.custom.bg, surface: th.custom.surface, text: th.custom.text, accent: th.custom.accent });
+    if (th.preset === 'custom') th.preset = `saved:${same ? same.id : id}`;
+    th.custom = null;
+    settings.save();
+  }
+}
+
 // Multiple windows and split view used to be switches (once one "experimental"
 // switch); they're always on now.
 if ('experimental' in settings.data || 'multiWindow' in settings.data || 'splitView' in settings.data) {

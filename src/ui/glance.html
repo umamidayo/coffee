@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src * data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <link rel="stylesheet" href="../pages/shared/theme.css">
+  <link rel="stylesheet" href="glance.css">
+</head>
+<body>
+  <!-- Glance: a link opened in a floating preview over the page. The page itself
+       is a view of its own placed in the frame below the bar; this draws the
+       dimmed backdrop, the bar and the frame around it. -->
+  <div id="backdrop"></div>
+  <div id="frame">
+    <div id="bar">
+      <button id="back" class="act nav" title="Back (Alt+Left)" disabled></button>
+      <button id="fwd" class="act nav" title="Forward (Alt+Right)" disabled></button>
+      <button id="reload" class="act nav" title="Reload"></button>
+      <span id="ico"></span>
+      <div id="what"><span id="title"></span><span id="host"></span></div>
+      <button id="tab" class="act" title="Open as a tab (Ctrl+Enter)"></button>
+      <button id="split" class="act" title="Open in split view"></button>
+      <button id="copy" class="act" title="Copy link"></button>
+      <button id="close" class="act" title="Close (Esc)"></button>
+    </div>
+    <div id="progress"></div>
+  </div>
+  <script src="icons.js"></script>
+  <script src="glance.js"></script>
+</body>
+</html>

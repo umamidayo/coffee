@@ -22,10 +22,12 @@ body.tabs-side.compact { --page-left: 0px; }
 body.tabs-side.tab-titles:not(.compact) { --side-w: 216px; }
 
 html, body { height: 100%; overflow: hidden; user-select: none; }
-body { background: var(--bg); cursor: default; }
+body { background: var(--frame, var(--bg)); cursor: default; }
 
 .drag { -webkit-app-region: drag; }
 .no-drag, button, input { -webkit-app-region: no-drag; }
+/* A menu is open: a click on the title bar closes it (see ui.js). */
+body.popup-open .drag { -webkit-app-region: no-drag; }
 
 button { background: none; border: 0; padding: 0; outline: none; }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 1px; }
@@ -293,7 +295,7 @@ body.no-bookmarks #bookmarks-bar { display: none; }
 }
 #loading-bar .fill {
   height: 100%; width: 100%; transform-origin: left; transform: scaleX(0); border-radius: inherit;
-  background: linear-gradient(90deg, transparent, var(--accent) 30%, color-mix(in srgb, var(--accent) 60%, #fff) 70%, var(--accent));
+  background: linear-gradient(90deg, transparent, var(--accent) 30%, color-mix(in srgb, var(--accent-2) 70%, #fff) 70%, var(--accent-2));
 }
 #loading-bar.loading { opacity: 1; transition: opacity .15s; }
 #loading-bar.loading .fill { animation: progress 9s cubic-bezier(.08, .7, .2, 1) forwards; }
@@ -316,7 +318,7 @@ body.html-fullscreen #page-slot { inset: 0; border-radius: 0; }
   position: fixed; height: 3px; background: var(--line);
   transition: background .2s;
 }
-.split-bar.on { background: var(--accent); }
+.split-bar.on { background: var(--accent-grad); }
 #split-divider {
   position: fixed; bottom: 0; display: grid; place-items: center;
   cursor: col-resize; background: var(--bg);
@@ -346,3 +348,24 @@ body.drop-target #topbar, body.drop-target #sidebar, body.drop-target #tabstrip 
 body.private-window { background: color-mix(in srgb, var(--private) 13%, var(--bg)); }
 /* Every tab here is private: no need for a badge on each one. */
 body.private-window .tab .priv { display: none; }
+
+/* ---------- Two-tone and gradient frames ---------- */
+/* The frame (toolbar, tab bar, side bar, bookmarks bar) sits on --frame, which
+   can be far from the page colors, so everything drawn straight on it takes its
+   shades from --frame-text. The address bar keeps the theme's own colors. */
+:root[data-frame="on"] #topbar > .nav,
+:root[data-frame="on"] #topbar > .actions,
+:root[data-frame="on"] #topbar > .winctl,
+:root[data-frame="on"] #sidebar,
+:root[data-frame="on"] #tabstrip,
+:root[data-frame="on"] #bookmarks-bar {
+  --text: var(--frame-text);
+  --muted: color-mix(in srgb, var(--frame-text) 64%, transparent);
+  --faint: color-mix(in srgb, var(--frame-text) 40%, transparent);
+  --hover: color-mix(in srgb, var(--frame-text) 9%, transparent);
+  --press: color-mix(in srgb, var(--frame-text) 15%, transparent);
+  --line: color-mix(in srgb, var(--frame-text) 13%, transparent);
+  /* The active tab's chip: a soft lift of the frame itself. */
+  --surface: color-mix(in srgb, var(--frame-text) 13%, transparent);
+}
+:root[data-frame="on"] #split-divider { background: transparent; }

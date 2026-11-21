@@ -1,7 +1,7 @@
 {
   "name": "coffee",
   "productName": "Coffee",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "A fast, minimal, good-looking browser.",
   "main": "src/main/main.js",
   "scripts": {

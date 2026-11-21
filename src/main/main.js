@@ -3,8 +3,19 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const {
-  app, BrowserWindow, session, ipcMain, protocol, net, nativeTheme, clipboard, dialog, shell, screen, safeStorage,
+  app, BrowserWindow, WebContentsView, session, ipcMain, protocol, net, nativeTheme, clipboard, dialog, shell, screen, safeStorage,
 } = require('electron');
+
+// Running from source (`npm start`) gets a profile of its own, "Coffee (dev)",
+// next to the installed app's "Coffee". The installed app encrypts its cookie
+// store (the enableCookieEncryption fuse); plain Electron doesn't, and opening
+// an encrypted store without it drops every saved cookie: you'd be signed out
+// of every site in the installed app after each run from source. It also lets
+// both run at the same time. (Only when nothing chose the folder already, such
+// as --user-data-dir or a test.) Must happen before anything reads the folder.
+if (!app.isPackaged && path.basename(app.getPath('userData')) === 'Coffee') {
+  app.setPath('userData', path.join(path.dirname(app.getPath('userData')), 'Coffee (dev)'));
+}
 
 const data = require('./data');
 const themes = require('./themes');
@@ -71,6 +82,8 @@ function newWindowState() {
   return {
     win: null, ui: null, overlay: null, float: null, tabs: null,
     private: false, // a private window: every tab in it is private
+    glance: null,   // the link open in Glance, if any
+    fsWatch: null, fsNoticeAt: 0, // full screen: watching for the pointer at the top edge
     fullscreenTab: null,
     peekTimer: null, peekArmed: true, lastFocus: Date.now(),
     omniRect: null, starRect: null, downloadsRect: null, extRect: null,
@@ -267,12 +280,14 @@ function layout() {
   const { bounds, radius } = pageBounds();
   for (const v of views) v.view.setBorderRadius(radius);
   if (W.float) W.float.hide('status');
+  if (W.glance) layoutGlance();
 
   // A tab in HTML fullscreen (a video) covers the whole window, even in a split.
   const fs = W.fullscreenTab;
   if (fs && fs.view && views.includes(fs)) {
     fs.view.setBounds(bounds);
     W.win.contentView.addChildView(fs.view); // above its split partner
+    if (W.float && W.float.isShowing()) W.win.contentView.addChildView(W.float.view); // the full-screen notice stays on top
     for (const v of views) if (v !== fs) v.view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
     emit('split', null);
     return;
@@ -403,8 +418,11 @@ function createWindow(opts = {}) {
 
   // Mouse back/forward buttons.
   W.win.on('app-command', bind((_e, cmd) => {
-    if (cmd === 'browser-backward') goBack();
-    else if (cmd === 'browser-forward') goForward();
+    // While Glance is open, the mouse's back / forward buttons move through Glance.
+    const dir = cmd === 'browser-backward' ? -1 : cmd === 'browser-forward' ? 1 : 0;
+    if (!dir) return;
+    if (W.glance && !W.glance.closing) { glanceHistory(dir); return; }
+    if (dir < 0) goBack(); else goForward();
   }));
 
   W.win.on('close', () => {
@@ -424,6 +442,11 @@ function createWindow(opts = {}) {
     state.tabs.destroy();
     try { if (!state.overlay.wc.isDestroyed()) state.overlay.wc.close(); } catch { /* already gone */ }
     state.float.destroy();
+    clearInterval(state.fsWatch);
+    if (state.glance) {
+      for (const v of [state.glance.chrome, state.glance.view]) { try { if (!v.webContents.isDestroyed()) v.webContents.close(); } catch { /* gone */ } }
+      state.glance = null;
+    }
     state.win = null;
     const i = winStates.indexOf(state);
     if (i >= 0) winStates.splice(i, 1);
@@ -449,6 +472,7 @@ function createWindow(opts = {}) {
       if (ext) ext.tabSelected(tab);
       if (W.overlay.isOpen()) W.overlay.close();
       W.float.hide();
+      if (W.glance && !W.glance.closing) closeGlance({ instant: true });
       if (tab.url.startsWith(NEWTAB) && !opts.fromPage) {
         // A freshly shown page takes keyboard focus as it attaches and loads,
         // without a 'focus' event, so keep handing focus back to the address
@@ -477,6 +501,12 @@ function createWindow(opts = {}) {
       updatePeekWatch();
       layout();
       emit('window', windowState());
+      // Say which site went full screen (and how to leave), once the window has settled.
+      if (on) {
+        closeGlance({ instant: true });
+        setTimeout(() => inWindow(state, () => { if (W.fullscreenTab === tab) showFullscreenNotice(tab); }), 350);
+      }
+      watchFullscreenEdge(on);
     },
     found: (tab, r) => {
       if (tab === W.tabs.active) emit('find:result', { active: r.activeMatchOrdinal, matches: r.matches });
@@ -694,6 +724,8 @@ function onInput(e, input, tab) {
     else if (key === '-' || key === '_') zoom(-1);
     else if (key === '0') zoom(0);
     else if (key === 'p' && !shift) activeWc() && activeWc().print();
+    // From the browser's own UI. In a page, the page gets Ctrl+S first (preload/compat.js).
+    else if (key === 's' && !shift && !tab) savePageAs();
     else if (key === 'i' && shift) toggleDevTools();
     else if (key === ',') openSettings();
     else if (key === 'u' && !shift) { const t = W.tabs.active; if (t && /^https?:/.test(t.url)) navigate(`view-source:${t.url}`, { newTab: true }); }
@@ -775,6 +807,7 @@ function pageMenu(tab, params) {
   if (params.linkURL) {
     items.push(
       { label: 'Open link in new tab', action: () => W.tabs.create({ url: params.linkURL, background: true, after: tab }) },
+      { label: 'Open link in Glance', accel: 'Alt+Click', icon: 'search', action: () => openGlance(tab, params.linkURL) },
       { label: 'Open link in split view', icon: 'split', action: () => openLinkInSplit(tab, params.linkURL) },
       ...(!tab.private ? [{ label: 'Open link in new window', icon: 'window', action: () => openNewWindow(params.linkURL) }] : []),
       ...(!W.private ? [{ label: 'Open link in private window', icon: 'mask', action: () => openInPrivateWindow(params.linkURL) }] : []),
@@ -788,7 +821,7 @@ function pageMenu(tab, params) {
       { label: 'Open image in new tab', action: () => W.tabs.create({ url: params.srcURL, background: true, after: tab }) },
       { label: 'Copy image', action: () => wc.copyImageAt(params.x, params.y) },
       { label: 'Copy image address', action: () => clipboard.writeText(params.srcURL) },
-      { label: 'Save image', action: () => wc.downloadURL(params.srcURL) },
+      { label: 'Save image as…', action: () => saveImageAs(wc, params, displayUrl(tab.url)) },
       sep,
     );
   }
@@ -815,9 +848,13 @@ function pageMenu(tab, params) {
     const short = text.length > 22 ? `${text.slice(0, 22)}…` : text;
     items.push(
       { label: 'Copy', accel: 'Ctrl+C', action: () => wc.copy() },
-      looksLikeAddress(text)
-        ? { label: `Go to ${short}`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) }
-        : { label: `Search for “${short}”`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) },
+      ...(looksLikeAddress(text)
+        ? [{ label: `Go to ${short}`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) }]
+        // Searching opens in Glance, so the results float over the page you're reading.
+        : [
+          { label: `Search for “${short}”`, icon: 'search', action: () => openGlance(tab, data.toUrl(text)) },
+          { label: 'Search in new tab', action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) },
+        ]),
       sep,
     );
   }
@@ -828,6 +865,7 @@ function pageMenu(tab, params) {
       { label: 'Reload', accel: 'Ctrl+R', action: () => reload() },
       sep,
       { label: 'Print…', accel: 'Ctrl+P', action: () => wc.print() },
+      { label: 'Save page as…', accel: 'Ctrl+S', disabled: !canSavePage(tab), action: () => savePageAs(tab) },
       { label: 'View page source', accel: 'Ctrl+U', disabled: !/^https?:/.test(tab.url), action: () => navigate(`view-source:${tab.url}`, { newTab: true }) },
       sep,
     );
@@ -1277,6 +1315,7 @@ function appMenu(x, y, opts = {}) {
     },
     { label: 'Find in page', accel: 'Ctrl+F', icon: 'search', disabled: !wc, action: () => openFind() },
     { label: 'Print…', accel: 'Ctrl+P', icon: 'printer', disabled: !wc, action: () => wc.print() },
+    { label: 'Save page as…', accel: 'Ctrl+S', icon: 'download', disabled: !canSavePage(tab), action: () => savePageAs(tab) },
     { sep: true },
     { label: popout ? 'Close pop-out video' : 'Pop out video', accel: 'Alt+P', icon: 'pip', disabled: !wc && !pipKept.size, action: () => toggleVideoPopout(tab) },
     t.pair
@@ -1724,6 +1763,46 @@ function looksLikeAddress(text) {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || (!/\s/.test(t) && /\.[a-z]{2,}(?:[:/?#]|$)/i.test(t));
 }
 
+// ---------------------------------------------------------------------------
+// Save page as (Ctrl+S): the whole page with its images and styles, one
+// .mhtml file, or a PDF.
+// ---------------------------------------------------------------------------
+
+function canSavePage(tab) {
+  const url = tab && displayUrl(tab.url);
+  return !!(tab && tab.wc && url && !isInternal(tab.url) && !url.startsWith('view-source:'));
+}
+
+async function savePageAs(tab = W.tabs.active) {
+  if (!canSavePage(tab)) return;
+  const state = W;
+  const wc = tab.wc;
+  let host = '';
+  try { host = new URL(displayUrl(tab.url)).hostname; } catch { /* keep empty */ }
+  const name = String(wc.getTitle() || host || 'page').replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'page';
+  const dir = data.settings.data.downloadDir || app.getPath('downloads');
+  const r = await dialog.showSaveDialog(state.win, {
+    title: 'Save page as',
+    defaultPath: path.join(dir, `${name}.html`),
+    filters: [
+      { name: 'Webpage, complete', extensions: ['html', 'htm'] },
+      { name: 'Webpage, single file', extensions: ['mhtml'] },
+      { name: 'PDF', extensions: ['pdf'] },
+    ],
+  });
+  if (r.canceled || !r.filePath || wc.isDestroyed()) return;
+  const file = r.filePath;
+  const ext = path.extname(file).toLowerCase();
+  try {
+    if (ext === '.pdf') await fs.promises.writeFile(file, await wc.printToPDF({ printBackground: true, preferCSSPageSize: true }));
+    else await wc.savePage(file, ext === '.mhtml' || ext === '.mht' ? 'MHTML' : 'HTMLComplete');
+    if (state.win && !state.win.isDestroyed()) inWindow(state, () => toast(`Saved ${path.basename(file)}`));
+  } catch (err) {
+    console.error('Save page failed:', err.message);
+    if (state.win && !state.win.isDestroyed()) inWindow(state, () => toast("Couldn't save this page"));
+  }
+}
+
 /** Ctrl+Shift+C: copy the page's address (Arc and Edge have this). */
 function copyPageUrl() {
   const tab = W.tabs.active;
@@ -1761,6 +1840,383 @@ function moveActiveTab(dir) {
 function duplicateActive(offset) {
   const tab = W.tabs.active;
   if (tab && displayUrl(tab.url)) W.tabs.duplicate(tab, { offset, background: true });
+}
+
+
+// ---------------------------------------------------------------------------
+// Save image as: the image's own bytes (from the web, a data: URL, or a blob:
+// the page made), named for what it really is, saved where you choose.
+// ---------------------------------------------------------------------------
+
+const IMAGE_EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/avif': 'avif', 'image/svg+xml': 'svg', 'image/bmp': 'bmp', 'image/x-icon': 'ico', 'image/vnd.microsoft.icon': 'ico', 'image/tiff': 'tiff' };
+
+/** { bytes, mime } from a data: URL. */
+function decodeDataUrl(u) {
+  const m = /^data:([^;,]*)((?:;[^;,]*)*?)(;base64)?,(.*)$/is.exec(u);
+  if (!m) throw new Error('not a data URL');
+  return { mime: (m[1] || 'application/octet-stream').toLowerCase(), bytes: m[3] ? Buffer.from(m[4], 'base64') : Buffer.from(decodeURIComponent(m[4]), 'utf8') };
+}
+
+/**
+ * The Referer a browser sends by default (strict-origin-when-cross-origin):
+ * the whole page address to the same origin, just the origin to another one
+ * (none from https to plain http).
+ */
+function referrerFor(pageUrl, target) {
+  try {
+    const p = new URL(pageUrl);
+    const t = new URL(target);
+    if (!/^https?:$/.test(p.protocol)) return '';
+    if (p.protocol === 'https:' && t.protocol === 'http:') return '';
+    if (p.origin === t.origin) { p.hash = ''; return p.href; }
+    return `${p.origin}/`;
+  } catch {
+    return '';
+  }
+}
+
+async function saveImageAs(wc, params, pageUrl) {
+  const src = params && params.srcURL;
+  if (!wc || wc.isDestroyed() || !src) return;
+  const state = W;
+  const say = (text) => { if (state.win && !state.win.isDestroyed()) inWindow(state, () => toast(text)); };
+  let got;
+  try {
+    if (/^data:/i.test(src)) {
+      got = decodeDataUrl(src);
+    } else if (/^blob:/i.test(src)) {
+      // Made by the page: only the page (the frame that made it) can read it.
+      const frame = params.frame && !params.frame.detached ? params.frame : wc.mainFrame;
+      const dataUrl = await frame.executeJavaScript(`fetch(${JSON.stringify(src)}).then((r) => r.blob()).then((b) => new Promise((ok, no) => { const f = new FileReader(); f.onload = () => ok(f.result); f.onerror = no; f.readAsDataURL(b); }))`);
+      got = decodeDataUrl(String(dataUrl));
+    } else if (/^https?:/i.test(src)) {
+      // Through the tab's own session (its cookies), saying which page it's from:
+      // image hosts that refuse "hotlinked" requests accept it then. The referrer
+      // follows the web's default rule (strict-origin-when-cross-origin): the
+      // full address for the same site, only the origin for another site.
+      // Chromium cancels a request whose referrer says more than that.
+      const headers = { Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' };
+      const referrer = referrerFor(pageUrl, src);
+      let res = null;
+      try {
+        res = await wc.session.fetch(src, { headers: referrer ? { ...headers, Referer: referrer } : headers });
+      } catch { /* refused: try once more without a referrer */ }
+      if (!res || !res.ok) res = await wc.session.fetch(src, { headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      got = { mime: String(res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase(), bytes: Buffer.from(await res.arrayBuffer()) };
+    } else {
+      throw new Error('unsupported address');
+    }
+  } catch (err) {
+    console.error('Save image failed:', err.message);
+    say("Couldn't get this image");
+    return;
+  }
+  // A name from the address, with the extension of what the image really is.
+  let base = 'image';
+  try {
+    if (/^https?:/i.test(src)) base = decodeURIComponent(new URL(src).pathname.split('/').pop() || '').replace(/\.[a-z0-9]{1,5}$/i, '') || 'image';
+  } catch { /* keep "image" */ }
+  base = base.replace(/[\\/:*?"<>|\x00-\x1f]+/g, ' ').trim().slice(0, 100) || 'image';
+  const ext = IMAGE_EXT[got.mime] || (/\.([a-z0-9]{2,5})(?:$|[?#])/i.exec(src) || [])[1] || 'png';
+  const dir = data.settings.data.downloadDir || app.getPath('downloads');
+  const r = await dialog.showSaveDialog(state.win, {
+    title: 'Save image as',
+    defaultPath: path.join(dir, `${base}.${ext}`),
+    filters: [{ name: `${ext.toUpperCase()} image`, extensions: [ext] }, { name: 'All files', extensions: ['*'] }],
+  });
+  if (r.canceled || !r.filePath) return;
+  try {
+    await fs.promises.writeFile(r.filePath, got.bytes);
+    say(`Saved ${path.basename(r.filePath)}`);
+  } catch (err) {
+    console.error('Save image failed:', err.message);
+    say("Couldn't save the image there");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Full screen: when a page makes itself full screen, a notice names the site
+// and how to leave. A full-screen page can draw anything, including a fake
+// address bar or a fake login box ("full-screen phishing"); this can't be
+// hidden by the page. It shows again when the pointer touches the top edge.
+// ---------------------------------------------------------------------------
+
+function showFullscreenNotice(tab) {
+  const f = W.float;
+  if (!f || !W.fullscreenTab || !W.win || W.win.isDestroyed()) return;
+  let host = '';
+  try {
+    const u = new URL(displayUrl(tab.url));
+    if (/^https?:$/.test(u.protocol)) host = u.hostname.replace(/^www\./, '');
+    else if (u.protocol === 'file:') host = 'A file on this computer';
+  } catch { /* unknown */ }
+  W.fsNoticeAt = Date.now();
+  f.show('fsnotice', { host, secure: tab.url.startsWith('https:') }, ({ width }) => {
+    const [w] = W.win.getContentSize();
+    return { x: Math.round((w - width) / 2), y: 14 };
+  });
+  f.hide('fsnotice', 4600);
+}
+
+function watchFullscreenEdge(on) {
+  const state = W;
+  clearInterval(state.fsWatch);
+  state.fsWatch = null;
+  if (!on) { if (state.float) state.float.hide('fsnotice'); return; }
+  state.fsWatch = setInterval(() => inWindow(state, () => {
+    if (!state.fullscreenTab || !state.win || state.win.isDestroyed()) { clearInterval(state.fsWatch); state.fsWatch = null; return; }
+    if (!state.win.isFocused()) return;
+    const p = screen.getCursorScreenPoint();
+    const b = state.win.getContentBounds();
+    const atTop = p.y - b.y <= 2 && p.x >= b.x && p.x < b.x + b.width;
+    if (atTop && !state.float.isShowing('fsnotice') && Date.now() - (state.fsNoticeAt || 0) > 1500) showFullscreenNotice(state.fullscreenTab);
+  }), 150);
+}
+
+// ---------------------------------------------------------------------------
+// Glance: a link opened in a floating preview over the page (Alt+click, or
+// "Open link in Glance"), without making a tab. "Open as tab" hands the live
+// page to a new tab, as it is, without loading it again.
+// ---------------------------------------------------------------------------
+
+const GLANCE_BAR = 44;
+
+/** Where the preview goes: centered over the page, the bar above it. */
+function glanceRect() {
+  const b = pageBounds().bounds;
+  const side = Math.max(24, Math.round(b.width * 0.07));
+  const width = Math.max(360, Math.min(1280, b.width - 2 * side));
+  const top = 24 + GLANCE_BAR;
+  return { x: b.x + Math.round((b.width - width) / 2), y: b.y + top, width, height: Math.max(200, b.height - top - 24) };
+}
+
+function sendGlance(g, ev, payload) {
+  const wc = g.chrome.webContents;
+  if (wc.isDestroyed()) return;
+  if (g.ready) wc.send(`ev:${ev}`, payload);
+  else g.queue.set(ev, payload);
+}
+
+function glancePageInfo(g) {
+  const wc = g.view.webContents;
+  if (wc.isDestroyed()) return;
+  let host = '';
+  const url = wc.getURL() || g.url;
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { /* none */ }
+  const title = wc.getTitle();
+  const h = wc.navigationHistory;
+  sendGlance(g, 'glance:page', {
+    title: title && title !== url ? title : '', host, favicon: g.favicon || '', loading: wc.isLoading(), secure: url.startsWith('https:'),
+    canGoBack: h.canGoBack(), canGoForward: h.canGoForward(),
+  });
+}
+
+/** Lay the preview out (window resized, page moved); `from` animates it in from a rect. */
+function layoutGlance(from) {
+  const g = W.glance;
+  if (!g || g.closing) return;
+  const b = pageBounds().bounds;
+  g.chrome.setBounds(b);
+  const r = glanceRect();
+  sendGlance(g, 'glance:place', { x: r.x - b.x, y: r.y - b.y, width: r.width, height: r.height, bar: GLANCE_BAR });
+  clearInterval(g.anim);
+  if (!from) { g.view.setBounds(r); return; }
+  // Grow from the link to the preview's place.
+  const t0 = Date.now();
+  const D = 240;
+  const step = () => {
+    const k = Math.min(1, (Date.now() - t0) / D);
+    const e = 1 - (1 - k) ** 3;
+    const lerp = (a, c) => Math.round(a + (c - a) * e);
+    if (!g.view.webContents.isDestroyed()) g.view.setBounds({ x: lerp(from.x, r.x), y: lerp(from.y, r.y), width: Math.max(1, lerp(from.width, r.width)), height: Math.max(1, lerp(from.height, r.height)) });
+    if (k >= 1) clearInterval(g.anim);
+  };
+  step();
+  g.anim = setInterval(step, 12);
+}
+
+function openGlance(tab, url, from) {
+  if (!/^https?:/i.test(String(url || ''))) return;
+  const state = W;
+  if (!state.win || state.win.isDestroyed()) return;
+  if (state.glance && !state.glance.closing) { state.glance.view.webContents.loadURL(url).catch(() => {}); return; }
+  if (state.overlay.isOpen()) state.overlay.close();
+  const chrome = new WebContentsView({ webPreferences: { preload: UI_PRELOAD, sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false } });
+  chrome.setBackgroundColor('#00000000');
+  lockDown(chrome.webContents);
+  const view = new WebContentsView({
+    webPreferences: {
+      session: tab.session, preload: path.join(ROOT, 'preload', 'internal.js'),
+      sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: true, webSecurity: true, spellcheck: true,
+    },
+  });
+  view.setBackgroundColor('#ffffff');
+  view.setBorderRadius(12);
+  const g = { chrome, view, tab, url, favicon: '', ready: false, queue: new Map(), closing: false, anim: null };
+  state.glance = g;
+  const wc = view.webContents;
+  const live = () => state.glance === g && !g.closing;
+  const info = () => inWindow(state, () => { if (live()) glancePageInfo(g); });
+  for (const ev of ['page-title-updated', 'did-navigate', 'did-navigate-in-page', 'did-start-loading', 'did-stop-loading']) wc.on(ev, info);
+  wc.on('page-favicon-updated', (_e, icons) => { g.favicon = icons[0] || ''; info(); });
+  wc.setWindowOpenHandler(({ url: u, disposition }) => {
+    if (disposition === 'new-window') return { action: 'allow', overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: '#ffffff', webPreferences: { session: tab.session, sandbox: true, contextIsolation: true } } };
+    if (/^https?:/i.test(u)) inWindow(state, () => state.tabs.create({ url: u, background: disposition === 'background-tab' }));
+    return { action: 'deny' };
+  });
+  wc.on('context-menu', (_e, params) => inWindow(state, () => { if (live()) glanceMenu(g, params); }));
+  // A click in Glance (its page, bar or backdrop) while a menu is open closes the
+  // menu, and does only that: it doesn't also close Glance or press a button.
+  const dismissMenu = (_e, mouse) => inWindow(state, () => {
+    if (mouse.type !== 'mouseDown' || !state.overlay.isOpen() || state.overlay.type === 'tooltip') return;
+    state.overlay.close();
+    g.menuClosedAt = Date.now();
+  });
+  wc.on('before-mouse-event', dismissMenu);
+  chrome.webContents.on('before-mouse-event', dismissMenu);
+  wc.on('before-input-event', (e, input) => inWindow(state, () => {
+    if (!live()) return;
+    if (input.type === 'keyDown' && input.key === 'Escape' && !wc.isLoading()) { e.preventDefault(); closeGlance(); return; }
+    if (input.type === 'keyDown' && input.alt && !input.control && !input.meta && (input.key === 'ArrowLeft' || input.key === 'ArrowRight')) {
+      e.preventDefault();
+      glanceHistory(input.key === 'ArrowLeft' ? -1 : 1);
+      return;
+    }
+    if (input.type === 'keyDown' && (input.control || input.meta) && !input.alt) {
+      if (input.key.toLowerCase() === 'w') { e.preventDefault(); closeGlance(); return; }
+      if (input.key === 'Enter') { e.preventDefault(); expandGlance(); return; }
+    }
+    onInput(e, input, null);
+  }));
+  chrome.webContents.once('did-finish-load', () => {
+    g.ready = true;
+    for (const [ev, payload] of g.queue) chrome.webContents.send(`ev:${ev}`, payload);
+    g.queue.clear();
+    chrome.webContents.send('ev:theme', theme);
+  });
+  chrome.webContents.loadFile(path.join(ROOT, 'ui', 'glance.html'));
+  state.win.contentView.addChildView(chrome);
+  state.win.contentView.addChildView(view);
+  sendGlance(g, 'glance:show', {});
+  glancePageInfo(g);
+  const b = pageBounds().bounds;
+  const start = from && from.width > 0 ? from : { x: b.x + b.width / 2 - 60, y: b.y + b.height / 2 - 40, width: 120, height: 80 };
+  layoutGlance(start);
+  wc.loadURL(url).catch(() => {});
+  wc.focus();
+}
+
+/** The click that reached Glance's bar only closed a menu (see dismissMenu in openGlance). */
+function glanceClickJustClosedMenu() {
+  return !!(W.glance && Date.now() - (W.glance.menuClosedAt || 0) < 400);
+}
+
+/** Back (-1) / forward (1) in Glance's own history. */
+function glanceHistory(dir) {
+  const g = W.glance;
+  if (!g || g.closing) return false;
+  const h = g.view.webContents.navigationHistory;
+  if (dir < 0 ? !h.canGoBack() : !h.canGoForward()) return true;
+  if (dir < 0) h.goBack(); else h.goForward();
+  return true;
+}
+
+/** Close Glance: shrink away, then let the page go (unless it became a tab). */
+function closeGlance({ instant = false, keepPage = false } = {}) {
+  const state = W;
+  const g = state.glance;
+  if (!g || g.closing) return;
+  g.closing = true;
+  clearInterval(g.anim);
+  sendGlance(g, 'glance:hide', {});
+  const finish = () => {
+    clearInterval(g.anim);
+    if (state.glance === g) state.glance = null;
+    if (state.win && !state.win.isDestroyed()) {
+      try { state.win.contentView.removeChildView(g.chrome); } catch { /* gone */ }
+      if (!keepPage) { try { state.win.contentView.removeChildView(g.view); } catch { /* gone */ } }
+    }
+    if (!g.chrome.webContents.isDestroyed()) g.chrome.webContents.close();
+    if (!keepPage && !g.view.webContents.isDestroyed()) g.view.webContents.close();
+    const t = state.tabs && state.tabs.active;
+    if (!keepPage && t && t.wc && state.win && !state.win.isDestroyed() && state.win.isFocused()) t.wc.focus();
+  };
+  if (instant || keepPage) { finish(); return; }
+  // Shrink a little toward the middle as the backdrop fades.
+  const r = g.view.getBounds();
+  const t0 = Date.now();
+  g.anim = setInterval(() => {
+    const k = Math.min(1, (Date.now() - t0) / 140);
+    const s = 1 - 0.06 * k;
+    if (!g.view.webContents.isDestroyed()) {
+      g.view.setBounds({ x: Math.round(r.x + (r.width * (1 - s)) / 2), y: Math.round(r.y + (r.height * (1 - s)) / 2), width: Math.round(r.width * s), height: Math.round(r.height * s) });
+    }
+    if (k >= 1) finish();
+  }, 12);
+}
+
+/** Make the previewed page a real tab (and optionally split it beside the page it came from). */
+function expandGlance({ split = false } = {}) {
+  const state = W;
+  const g = state.glance;
+  if (!g || g.closing) return;
+  const wc = g.view.webContents;
+  if (wc.isDestroyed()) return closeGlance({ instant: true });
+  const parent = state.tabs.tabs.includes(g.tab) ? g.tab : state.tabs.active;
+  closeGlance({ keepPage: true });
+  try { state.win.contentView.removeChildView(g.view); } catch { /* not attached */ }
+  const t = state.tabs.create({ background: true, after: parent, init: { url: wc.getURL() || g.url, title: wc.getTitle(), favicon: g.favicon } });
+  t.takeView(g.view, { title: wc.getTitle(), favicon: g.favicon });
+  t.playing = false;
+  t.loading = wc.isLoading();
+  if (split && parent) state.tabs.splitAt(t.id, 'right', parent.id);
+  else state.tabs.activate(t.id);
+}
+
+function glanceMenu(g, params) {
+  const wc = g.view.webContents;
+  const items = [];
+  const sep = { sep: true };
+  if (params.linkURL) {
+    items.push(
+      { label: 'Open link here', action: () => wc.loadURL(params.linkURL).catch(() => {}) },
+      { label: 'Open link in new tab', action: () => W.tabs.create({ url: params.linkURL, background: true }) },
+      { label: 'Copy link address', action: () => clipboard.writeText(params.linkURL) },
+      sep,
+    );
+  }
+  if (params.mediaType === 'image' && params.srcURL) {
+    items.push(
+      { label: 'Copy image', action: () => wc.copyImageAt(params.x, params.y) },
+      { label: 'Save image as…', action: () => saveImageAs(wc, params, wc.getURL()) },
+      sep,
+    );
+  }
+  if (params.isEditable) {
+    const f = params.editFlags;
+    items.push(
+      { label: 'Cut', accel: 'Ctrl+X', disabled: !f.canCut, action: () => wc.cut() },
+      { label: 'Copy', accel: 'Ctrl+C', disabled: !f.canCopy, action: () => wc.copy() },
+      { label: 'Paste', accel: 'Ctrl+V', disabled: !f.canPaste, action: () => wc.paste() },
+      sep,
+    );
+  } else if (params.selectionText && params.selectionText.trim()) {
+    items.push({ label: 'Copy', accel: 'Ctrl+C', action: () => wc.copy() }, sep);
+  }
+  items.push(
+    { label: 'Back', disabled: !wc.navigationHistory.canGoBack(), action: () => wc.navigationHistory.goBack() },
+    { label: 'Forward', disabled: !wc.navigationHistory.canGoForward(), action: () => wc.navigationHistory.goForward() },
+    { label: 'Reload', action: () => wc.reload() },
+    sep,
+    { label: 'Open as tab', accel: 'Ctrl+Enter', icon: 'window', action: () => expandGlance() },
+    { label: 'Open in split view', icon: 'split', action: () => expandGlance({ split: true }) },
+    { label: 'Close Glance', accel: 'Esc', action: () => closeGlance() },
+    sep,
+    { label: 'Inspect', accel: 'F12', action: () => wc.inspectElement(params.x, params.y) },
+  );
+  const b = g.view.getBounds();
+  showMenu(b.x + params.x, b.y + params.y, items);
 }
 
 /** The ad blocker exception that covers `host`, if any. */
@@ -2143,9 +2599,9 @@ function setSetting(key, value) {
       const v = value || {};
       const saved = themes.sanitizeSaved(v.saved !== undefined ? v.saved : s.theme.saved);
       const savedIds = new Set(saved.map((x) => `saved:${x.id}`));
-      const preset = v.preset === 'custom' || themes.PRESETS.some((p) => p.id === v.preset) || savedIds.has(v.preset) ? v.preset : 'coffee';
-      s.theme = { preset, custom: v.custom ? themes.sanitizeCustom(v.custom) : s.theme.custom, saved };
-      if (s.theme.custom === undefined) s.theme.custom = null;
+      // Custom themes are all saved themes now (see data.js); there's no separate "custom" slot.
+      const preset = themes.PRESETS.some((p) => p.id === v.preset) || savedIds.has(v.preset) ? v.preset : 'coffee';
+      s.theme = { preset, custom: null, saved };
       applyTheme();
       break;
     }
@@ -2156,6 +2612,26 @@ function setSetting(key, value) {
   refreshWindows();
   broadcastSettings();
 }
+
+// Alt+click on a link (see preload/compat.js): Glance. From Glance itself, it opens there.
+ipcMain.on('glance:open', (e, p = {}) => {
+  const url = String((p && p.url) || '');
+  if (!/^https?:/i.test(url)) return;
+  const inGlance = winStates.find((s) => s.glance && s.glance.view.webContents === e.sender);
+  if (inGlance) { inGlance.glance.view.webContents.loadURL(url).catch(() => {}); return; }
+  const hit = findTab(e.sender);
+  if (!hit || !hit.tab.view) return;
+  const b = hit.tab.view.getBounds();
+  const r = p.rect || {};
+  const from = Number.isFinite(r.x) ? { x: b.x + Math.round(r.x), y: b.y + Math.round(r.y), width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)) } : null;
+  inWindow(hit.state, () => openGlance(hit.tab, url, from));
+});
+
+// Ctrl+S that the page itself didn't handle (see preload/compat.js).
+ipcMain.on('page:save-shortcut', (e) => {
+  const hit = findTab(e.sender);
+  if (hit) inWindow(hit.state, () => savePageAs(hit.tab));
+});
 
 /** -1 / 0 / 1 for version strings like 0.1.16. */
 function compareVersions(a, b) {
@@ -2234,13 +2710,13 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete', 'history:clear-range', 'history:clear-site', 'cookies:clear-site', 'adblock:allow', 'browser:set-default', 'whatsnew:open']);
-const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list', 'history:sites', 'cookies:sites', 'browser:default', 'whatsnew:data']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete', 'history:clear-range', 'history:clear-site', 'cookies:clear-site', 'adblock:allow', 'browser:set-default', 'whatsnew:open', 'clipboard:write-text']);
+const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list', 'history:sites', 'cookies:sites', 'browser:default', 'whatsnew:data', 'clipboard:read-text']);
 
 /** The window state that owns a sender's chrome or overlay (falls back to the current window). */
 function ownerOf(e) {
   const wc = e.sender;
-  return winStates.find((s) => s.ui === wc || (s.overlay && s.overlay.wc === wc) || (s.float && s.float.wc === wc)) || W;
+  return winStates.find((s) => s.ui === wc || (s.overlay && s.overlay.wc === wc) || (s.float && s.float.wc === wc) || (s.glance && s.glance.chrome.webContents === wc)) || W;
 }
 
 function senderKind(e) {
@@ -2249,6 +2725,7 @@ function senderKind(e) {
   if (wc === owner.ui) return 'ui';
   if (owner.overlay && wc === owner.overlay.wc) return 'overlay';
   if (owner.float && wc === owner.float.wc) return 'float';
+  if (owner.glance && wc === owner.glance.chrome.webContents) return 'glance';
   const url = e.senderFrame ? e.senderFrame.url : wc.getURL();
   if (url && url.startsWith('coffee://')) return 'internal';
   return null;
@@ -2268,6 +2745,8 @@ ipcMain.on('cmd', (e, type, p = {}) => {
   if (!kind || (kind === 'internal' && !INTERNAL_SEND.has(type))) return;
   // The hint view only reports what it drew.
   if (kind === 'float' && type !== 'float:size') return;
+  // Glance's bar can only act on Glance.
+  if (kind === 'glance' && !['glance:close', 'glance:expand', 'glance:split', 'glance:copy', 'glance:back', 'glance:forward', 'glance:reload', 'glance:stop'].includes(type)) return;
   inWindow(ownerOf(e), () => runCommand(e, kind, type, p));
 });
 
@@ -2321,6 +2800,14 @@ function runCommand(e, kind, type, p) {
     case 'float:size': W.float.sized(p.seq, Number(p.width) || 0, Number(p.height) || 0); break;
     case 'tabcard:show': showTabCard(p, kind); break;
     case 'tabcard:hide': W.float.hide('tabcard'); break;
+    case 'glance:close': if (!glanceClickJustClosedMenu()) closeGlance(); break;
+    case 'glance:back': glanceHistory(-1); break;
+    case 'glance:forward': glanceHistory(1); break;
+    case 'glance:reload': if (W.glance) W.glance.view.webContents.reload(); break;
+    case 'glance:stop': if (W.glance) W.glance.view.webContents.stop(); break;
+    case 'glance:expand': if (!glanceClickJustClosedMenu()) expandGlance(); break;
+    case 'glance:split': if (!glanceClickJustClosedMenu()) expandGlance({ split: true }); break;
+    case 'glance:copy': if (W.glance) { clipboard.writeText(W.glance.view.webContents.getURL() || W.glance.url); toast('Link copied'); } break;
 
     // navigation
     case 'nav:go': {
@@ -2334,6 +2821,8 @@ function runCommand(e, kind, type, p) {
     case 'tab:switch': switchToTab(Number(p.id)); break;
     case 'tabsearch:open': showTabSearch(); break;
     case 'whatsnew:open': openWhatsNew(); break;
+    // Settings' color copy & paste (short text only).
+    case 'clipboard:write-text': if (typeof p.text === 'string') clipboard.writeText(p.text.slice(0, 64)); break;
     case 'nav:stop': { const wc = activeWc(); if (wc) wc.stop(); break; }
     case 'nav:home': navigate(homeUrl(), { newTab: !!p.newTab }); break;
     case 'page:focus': { const t = W.tabs.active; if (t) t.urlbarUntil = 0; const wc = activeWc(); if (wc) wc.focus(); break; }
@@ -2476,6 +2965,7 @@ async function runInvoke(e, type, p) {
       };
     case 'suggest': return suggestWithTabs(p.q, p.inline !== false);
     case 'whatsnew:data': return { version: app.getVersion(), notes: notesForThisVersion() };
+    case 'clipboard:read-text': return String((await clipboard.readText()) || '').trim().slice(0, 64);
     case 'newtab:data':
       return { show: data.settings.data.newtabShortcuts !== false, shortcuts: data.shortcuts(8) };
     case 'settings:get': return settingsPayload();
@@ -2711,11 +3201,18 @@ function dragZone(d, p) {
   const side = p.x < r.x + r.width / 2 ? 'left' : 'right';
   const partner = d.from.tabs.splitPartner(d.tabId, side);
   if (!partner) return NOTHING;
-  const half = Math.floor(r.width / 2);
+  // The preview covers the whole page: where the tab lands, and what stays beside it.
+  const p2 = d.from.tabs.get(partner);
+  const ps = p2 ? p2.serialize() : {};
   return {
     kind: 'split', side, partner,
     label: side === 'left' ? 'Open on the left' : 'Open on the right',
-    rect: side === 'left' ? { ...r, width: half } : { ...r, x: r.x + half, width: r.width - half },
+    rect: r,
+    preview: {
+      side,
+      tab: { title: d.card.title, favicon: d.card.favicon, letter: d.card.letter },
+      partner: { title: ps.title || 'New Tab', favicon: ps.favicon || '', newtab: !!ps.newtab },
+    },
   };
 }
 
@@ -2784,7 +3281,7 @@ function dragTick() {
   }
   if (changed) {
     d.hint.setBounds(zone.rect);
-    post(d.hint, 'drag:hint', { label: zone.label, kind: zone.kind });
+    post(d.hint, 'drag:hint', { label: zone.label, kind: zone.kind, preview: zone.preview || null });
     if (!d.hint.isVisible()) d.hint.showInactive();
     d.ghost.moveTop(); // the card stays above the highlight
   } else if (zone.kind === 'new' || zone.kind === 'place') {
