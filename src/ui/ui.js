@@ -47,6 +47,26 @@
   $('find-next').innerHTML = Icons.arrowDown;
   $('find-close').innerHTML = Icons.close;
 
+  // Hover hints for the buttons, with their shortcuts.
+  const tips = {
+    back: 'Back (Alt+Left) · right-click for history · middle-click opens in a new tab',
+    forward: 'Forward (Alt+Right) · right-click for history · middle-click opens in a new tab',
+    home: 'Home (Alt+Home) · Ctrl-click opens a new tab',
+    'bookmarks-btn': 'Bookmarks',
+    'ext-btn': 'Extensions',
+    'downloads-btn': 'Downloads (Ctrl+J)',
+    'menu-btn': 'Menu',
+    'new-tab': 'New tab (Ctrl+T)',
+    'new-tab-top': 'New tab (Ctrl+T)',
+    'settings-btn': 'Settings (Ctrl+,)',
+    'win-min': 'Minimize',
+    'win-close': 'Close',
+    'find-prev': 'Previous match (Shift+Enter)',
+    'find-next': 'Next match (Enter)',
+    'find-close': 'Close (Esc)',
+  };
+  for (const [id, text] of Object.entries(tips)) $(id).title = text;
+
   const rectOf = (node) => {
     const r = node.getBoundingClientRect();
     return { x: r.left, y: r.top, width: r.width, height: r.height };
@@ -82,16 +102,15 @@
     document.body.classList.toggle('blurred', !w.focused);
     $('win-max').innerHTML = w.maximized ? Icons.restore : Icons.maximize;
     $('win-max').setAttribute('aria-label', w.maximized ? 'Restore' : 'Maximize');
+    $('win-max').title = w.maximized ? 'Restore' : 'Maximize';
   }
   api.on('window', applyWindow);
 
   // =====================================================================
   // Tabs: a side strip (icons) or a top strip (icons + titles)
   // =====================================================================
-  const sideStrip = new window.TabStrip($('tabs'), {
-    api, orientation: 'vertical', titles: false,
-    onHover: (n) => { if (!document.body.classList.contains('tab-titles')) showTip(n); }, onLeave: () => hideTip(),
-  });
+  // Resting on a tab shows its hover card (title, address, page preview).
+  const sideStrip = new window.TabStrip($('tabs'), { api, orientation: 'vertical', titles: false });
   const topStrip = new window.TabStrip($('htabs'), { api, orientation: 'horizontal', titles: true });
   let tabLayout = 'vertical';
   const strip = () => (tabLayout === 'horizontal' ? topStrip : sideStrip);
@@ -121,38 +140,21 @@
   $('new-tab-top').onclick = () => api.send('tab:new');
   $('update-btn').onclick = () => api.send('update:install');
 
+  // Double-click empty space in the side bar: new tab (Edge and Firefox vertical tabs).
+  $('tabs-scroll').addEventListener('dblclick', (e) => {
+    if (e.target.closest('.tab, button')) return;
+    api.send('tab:new');
+  });
+
   // Right-click empty tab space: new tab / reopen recently closed tabs.
   for (const area of [$('sidebar'), $('tabstrip')]) {
     area.addEventListener('contextmenu', (e) => {
       if (e.target.closest('.tab')) return;
       e.preventDefault();
-      hideTip();
       api.send('sidebar:menu', { x: e.clientX, y: e.clientY });
     });
   }
   $('settings-btn').onclick = () => api.send('settings:open');
-
-  // ---------- tooltips (rendered in the overlay so they float over the page) ----------
-  const measure = document.createElement('canvas').getContext('2d');
-  measure.font = '12px "Segoe UI Variable Text", "Segoe UI", sans-serif';
-  let tipTimer = null;
-  let tipWarm = 0;
-  function showTip(n) {
-    clearTimeout(tipTimer);
-    if (sideStrip.dragging) return;
-    const delay = Date.now() - tipWarm < 600 ? 0 : 450;
-    tipTimer = setTimeout(() => {
-      if (!n.matches(':hover') || !n.isConnected) return;
-      const text = (n._title || 'New Tab').slice(0, 80);
-      const r = n.getBoundingClientRect();
-      api.send('tooltip:show', { text, x: r.right + 10, y: r.top + r.height / 2, width: Math.min(measure.measureText(text).width, 420) });
-      tipWarm = Date.now();
-    }, delay);
-  }
-  function hideTip() {
-    clearTimeout(tipTimer);
-    if (state.overlay === 'tooltip') { tipWarm = Date.now(); api.send('tooltip:hide'); }
-  }
 
   // =====================================================================
   // Navigation buttons
@@ -170,8 +172,18 @@
       api.send('nav:reload', { hard: e.shiftKey || e.ctrlKey });
     }
   };
+  // Middle-click (or Ctrl-click) Back / Forward / Reload: that page in a new tab (Chrome).
+  for (const id of ['back', 'forward', 'reload']) {
+    const cmd = { back: 'nav:back', forward: 'nav:forward', reload: 'nav:reload' }[id];
+    $(id).addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
+    $(id).addEventListener('auxclick', (e) => { if (e.button === 1) api.send(cmd, { newTab: true }); });
+  }
   for (const id of ['back', 'forward']) {
-    $(id).addEventListener('auxclick', (e) => { if (e.button === 1) api.send(id === 'back' ? 'nav:back' : 'nav:forward'); });
+    $(id).addEventListener('click', (e) => {
+      if (!e.ctrlKey) return;
+      e.stopImmediatePropagation();
+      api.send(id === 'back' ? 'nav:back' : 'nav:forward', { newTab: true });
+    }, true);
   }
 
   // =====================================================================
@@ -184,7 +196,6 @@
   const star = $('omni-star');
   const zoomPill = $('omni-zoom');
   let editing = false;
-  let hoverUrl = '';
   let suggestions = [];
   let selected = 0;
   let suggestSeq = 0;
@@ -194,7 +205,7 @@
     return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
-  const INTERNAL_NAMES = { settings: 'Settings', welcome: 'Welcome', history: 'History' };
+  const INTERNAL_NAMES = { settings: 'Settings', welcome: 'Welcome', history: 'History', 'whats-new': "What's new" };
   function prettyUrl(url) {
     try {
       const u = new URL(url);
@@ -215,10 +226,9 @@
     const t = active();
     const url = t ? t.url : '';
     if (!editing && document.activeElement !== input) input.value = url;
-    const showing = hoverUrl || url;
-    display.classList.toggle('hovering', !!hoverUrl);
-    display.innerHTML = showing ? prettyUrl(showing) : '';
-    omni.classList.toggle('show-display', !!showing && document.activeElement !== input);
+    // (A hovered link's address shows in the status bubble over the page, not here.)
+    display.innerHTML = url ? prettyUrl(url) : '';
+    omni.classList.toggle('show-display', !!url && document.activeElement !== input);
 
     // Private tab indicator
     const priv = !!(t && t.private);
@@ -234,16 +244,19 @@
     const blocked = state.settings.adblock && t ? t.blocked : 0;
     shield.innerHTML = (insecure ? Icons.unlock : state.settings.adblock ? Icons.shield : Icons.shieldOff)
       + `<span class="count${blocked ? ' on' : ''}">${blocked > 99 ? '99+' : blocked || ''}</span>`;
-    shield.title = insecure ? 'Connection is not secure' : '';
+    shield.title = insecure ? 'Connection is not secure'
+      : !state.settings.adblock ? 'Ad blocking is off'
+        : `Ad blocking: ${blocked} blocked on this page · click for options`;
 
     // Bookmark star
     const bookmarked = web && state.bookmarks.some((b) => b.url === url);
     star.hidden = !web;
     star.classList.toggle('on', bookmarked);
     star.innerHTML = bookmarked ? Icons.starFilled : Icons.star;
+    star.title = bookmarked ? 'Edit bookmark (Ctrl+D)' : 'Bookmark this page (Ctrl+D)';
 
     zoomPill.hidden = !(t && t.zoom);
-    if (t && t.zoom) zoomPill.textContent = `${t.zoom}%`;
+    if (t && t.zoom) { zoomPill.textContent = `${t.zoom}%`; zoomPill.title = `Zoom ${t.zoom}% · click to reset (Ctrl+0)`; }
 
     // Pop-out video: offered while the page plays media, and kept (lit) while
     // a video popped out from a page you've left is still playing.
@@ -260,6 +273,7 @@
     const loading = t && t.loading && !t.newtab;
     $('reload').innerHTML = loading ? Icons.stop : Icons.reload;
     $('reload').setAttribute('aria-label', loading ? 'Stop' : 'Reload');
+    $('reload').title = loading ? 'Stop loading (Esc)' : 'Reload (Ctrl+R) · Shift-click to bypass the cache';
   }
 
   function sendOmniRect() { api.send('omni:rect', { rect: rectOf(omni) }); }
@@ -328,13 +342,24 @@
       const pick = suggestions[selected];
       const value = input.value.trim();
       if (!value) return;
-      const target = pick && editing ? pick.url : value;
-      api.send('nav:go', { url: target, newTab: e.altKey });
+      if (pick && editing && pick.tab && !e.altKey && !e.ctrlKey) {
+        api.send('tab:switch', { id: pick.tab });
+      } else {
+        // Ctrl+Enter: "coffee" goes to www.coffee.com (Chrome and Firefox).
+        const word = e.ctrlKey && /^[a-z0-9-]+$/i.test(value) ? `www.${value}.com` : null;
+        const target = word || (pick && editing ? pick.url : value);
+        api.send('nav:go', { url: target, newTab: e.altKey });
+      }
       editing = false;
       suggestions = [];
       api.send('overlay:close', { type: 'suggest' });
       input.blur();
       api.send('page:focus');
+    } else if (e.key === 'Delete' && e.shiftKey && suggestions[selected] && suggestions[selected].kind === 'history') {
+      // Shift+Delete forgets the highlighted page from history (Chrome).
+      e.preventDefault();
+      api.send('history:delete', { urls: [suggestions[selected].url] });
+      setTimeout(() => updateSuggestions(false), 60);
     } else if (e.key === 'Escape') {
       if (suggestions.length && state.overlay === 'suggest') {
         suggestions = [];
@@ -355,10 +380,6 @@
   });
   api.on('urlbar:blur', () => { editing = false; input.blur(); });
   api.on('page-focus', () => { if (document.activeElement === input) input.blur(); });
-  api.on('hover-url', (url) => {
-    hoverUrl = url || '';
-    if (document.activeElement !== input) renderOmni();
-  });
 
   shield.onclick = () => api.send('shield:menu', { rect: rectOf(shield) });
   shield.dataset.toggle = 'menu';
@@ -455,8 +476,9 @@
   const find = $('find');
   const findInput = $('find-input');
   const findCount = $('find-count');
-  function openFind() {
+  function openFind(p) {
     find.hidden = false;
+    if (p && p.text) findInput.value = p.text;
     findInput.focus();
     findInput.select();
     if (findInput.value) api.send('find', { text: findInput.value });
@@ -719,8 +741,6 @@
   // =====================================================================
   function applySettings(s) {
     state.settings = s;
-    // Tabs can be dragged out of the strip (split view, other windows) when those are on.
-    sideStrip.canTear = topStrip.canTear = !!s.canTear;
     document.body.classList.toggle('no-bookmarks', !s.bookmarksBarShown);
     applyLayout(s);
     $('home').hidden = !s.showHome;
@@ -743,7 +763,6 @@
     if (snap.activeId !== lastActiveId) {
       lastActiveId = snap.activeId;
       editing = false;
-      hoverUrl = '';
       // Switching tabs always shows the new tab's address, even mid-focus.
       const t = active();
       input.value = t ? t.url : '';

@@ -134,8 +134,6 @@ body.tabs-top #tabstrip { display: flex; }
 #omnibox.show-display #omni-display { opacity: 1; }
 #omnibox.show-display #omni-input { color: transparent; }
 #omni-display .host { color: var(--text); }
-#omni-display.hovering { color: var(--muted); font-style: italic; }
-#omni-display.hovering .host { color: var(--muted); }
 
 .omni-icon {
   position: relative; width: 26px; height: 26px; flex: none; border-radius: 7px;

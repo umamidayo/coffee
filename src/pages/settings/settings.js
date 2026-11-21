@@ -218,6 +218,7 @@
   // Render everything from the current settings
   // =====================================================================
   function render() {
+    $('notesLink').textContent = s.whatsNewTitle ? `Coffee ${s.version}: ${s.whatsNewTitle}` : 'See what changed in this version';
     const engine = $('engine');
     engine.innerHTML = s.engines.map((e) => `<option value="${e.id}">${e.name}</option>`).join('');
     engine.value = s.searchEngine;
@@ -239,8 +240,6 @@
     $('hiddenCount').textContent = n ? `${n} site${n === 1 ? '' : 's'} hidden from the new tab page` : 'Remove a shortcut with the × that appears when you hover it';
     $('restoreShortcuts').disabled = !n;
     $('restoreSession').checked = s.restoreSession;
-    $('multiWindow').checked = !!s.multiWindow;
-    $('splitView').checked = !!s.splitView;
     $('adblock').checked = s.adblock;
     $('blocked').textContent = `${s.blockedTotal.toLocaleString()} ads and trackers blocked so far`;
     $('sleepMinutes').value = String(s.sleepMinutes);
@@ -364,11 +363,10 @@
   $('homePageSave').onclick = saveHomePage;
   $('homePageInput').onkeydown = (e) => { if (e.key === 'Enter') saveHomePage(); };
   $('runSetup').onclick = () => { location.href = 'coffee://welcome/'; };
+  $('notesBtn').onclick = () => api.send('whatsnew:open');
   $('newtabShortcuts').onchange = (e) => set('newtabShortcuts', e.target.checked);
   $('restoreShortcuts').onclick = () => { api.send('shortcuts:restore'); toast('Shortcuts restored'); };
   $('restoreSession').onchange = (e) => set('restoreSession', e.target.checked);
-  $('multiWindow').onchange = (e) => set('multiWindow', e.target.checked);
-  $('splitView').onchange = (e) => set('splitView', e.target.checked);
   $('adblock').onchange = (e) => set('adblock', e.target.checked);
   $('sleepMinutes').onchange = (e) => set('sleepMinutes', Number(e.target.value));
   $('clearHistory').onclick = () => {

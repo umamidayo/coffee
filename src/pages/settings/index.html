@@ -82,16 +82,6 @@
             <label class="switch"><input type="checkbox" id="tabTitles"><i></i></label>
           </div>
         </div>
-        <div class="card">
-          <div class="row">
-            <div class="txt"><b>Multiple windows</b><span>Open more windows with Ctrl+N, and drag a tab out of the tab strip into a new window or onto another one</span></div>
-            <label class="switch"><input type="checkbox" id="multiWindow"><i></i></label>
-          </div>
-          <div class="row">
-            <div class="txt"><b>Split view</b><span>See two tabs side by side: drag a tab onto the left or right half of the page, or right-click a tab and choose Open beside current tab</span></div>
-            <label class="switch"><input type="checkbox" id="splitView"><i></i></label>
-          </div>
-        </div>
       </section>
 
       <!-- New tab page -->
@@ -272,12 +262,16 @@
       </section>
 
       <!-- About -->
-      <section id="about" data-keywords="about version update setup guide help">
+      <section id="about" data-keywords="about version update setup guide help what's new whats new patch notes release notes changelog">
         <header><h2>About</h2><p>Version, updates and setup.</p></header>
         <div class="card">
           <div class="row">
             <div class="txt"><b id="upd-title">Coffee</b><span id="upd-status"></span></div>
             <button class="btn" id="upd-btn">Check for updates</button>
+          </div>
+          <div class="row">
+            <div class="txt"><b>What's new</b><span id="notesLink">See what changed in this version</span></div>
+            <button class="btn" id="notesBtn">Read</button>
           </div>
           <div class="row">
             <div class="txt"><b>Setup guide</b><span>Pick your theme, tab layout and search engine step by step</span></div>

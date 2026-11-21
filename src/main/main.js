@@ -11,10 +11,12 @@ const themes = require('./themes');
 const adblock = require('./adblock');
 const downloads = require('./downloads');
 const Overlay = require('./overlay');
+const Float = require('./float');
 const updater = require('./updater');
 const compat = require('./compat');
 const importer = require('./importer');
 const sites = require('./sites');
+const patchNotes = require('./patch-notes');
 const { parse: parseDomain } = require('tldts-experimental');
 const { TabManager, NEWTAB, isInternal, displayUrl } = require('./tabs');
 
@@ -67,7 +69,7 @@ const M = 12; // shadow margin around overlay panels (matches overlay.css)
  */
 function newWindowState() {
   return {
-    win: null, ui: null, overlay: null, tabs: null,
+    win: null, ui: null, overlay: null, float: null, tabs: null,
     fullscreenTab: null,
     peekTimer: null, peekArmed: true, lastFocus: Date.now(),
     omniRect: null, starRect: null, downloadsRect: null, extRect: null,
@@ -128,7 +130,17 @@ const emit = (ev, payload) => {
 function openFind(which = 'find:open') {
   if (!W.ui || W.ui.isDestroyed()) return;
   W.ui.focus();
-  emit(which);
+  if (which !== 'find:open') return emit(which);
+  // Like Chrome and Firefox: text selected on the page is what you look for.
+  const wc = activeWc();
+  const state = W;
+  if (!wc) return emit(which, {});
+  wc.executeJavaScriptInIsolatedWorld(1001, [{ code: 'String(getSelection())' }])
+    .catch(() => '')
+    .then((sel) => {
+      const text = String(sel || '').trim();
+      inWindow(state, () => emit(which, { text: text && text.length <= 200 && !/\n/.test(text) ? text : '' }));
+    });
 }
 
 function focusUrlbar() {
@@ -146,7 +158,7 @@ function applyTheme() {
   nativeTheme.themeSource = theme.mode;
   eachWindow(() => {
     W.win.setBackgroundColor(theme.vars['--bg']);
-    const targets = [W.ui, W.overlay && W.overlay.wc];
+    const targets = [W.ui, W.overlay && W.overlay.wc, W.float && W.float.wc];
     for (const t of W.tabs.tabs) {
       if (t.wc && isInternal(t.url)) targets.push(t.wc);
       t.applyBackground();
@@ -174,10 +186,6 @@ function bookmarksBarShown() {
 
 const tabsOnTop = () => data.settings.data.tabLayout === 'horizontal';
 // Opt-in features (Settings → Tabs).
-const multiWindow = () => !!data.settings.data.multiWindow;
-const splitOn = () => !!data.settings.data.splitView;
-/** Tabs can be dragged out of the strip (to split view, or to other windows). */
-const canTear = () => multiWindow() || splitOn();
 const compactSidebar = () => !tabsOnTop() && !!data.settings.data.compactSidebar;
 const sidebarWidth = () => (data.settings.data.tabTitles !== false ? SIDEBAR_TITLES_W : SIDEBAR_W);
 
@@ -237,7 +245,7 @@ function showPeek() {
   const [, h] = W.win.getContentSize();
   const top = chromeTop();
   const width = peekTitles() ? PEEK_W : SIDEBAR_W + 8;
-  W.overlay.open('sidebar', { x: 0, y: top, width: width + M, height: h - top }, { ...W.tabs.snapshot(), titles: peekTitles(), canTear: canTear() });
+  W.overlay.open('sidebar', { x: 0, y: top, width: width + M, height: h - top }, { ...W.tabs.snapshot(), titles: peekTitles() });
 }
 
 function toggleTabLayout() { setSetting('tabLayout', tabsOnTop() ? 'vertical' : 'horizontal'); }
@@ -255,6 +263,7 @@ function layout() {
   if (!views.length) return;
   const { bounds, radius } = pageBounds();
   for (const v of views) v.view.setBorderRadius(radius);
+  if (W.float) W.float.hide('status');
 
   // A tab in HTML fullscreen (a video) covers the whole window, even in a split.
   const fs = W.fullscreenTab;
@@ -350,6 +359,9 @@ function createWindow(opts = {}) {
   // anything else (e.g. a link or file dropped onto the title bar).
   lockDown(W.ui);
   lockDown(W.overlay.wc);
+  // Link status bubble and tab hover cards (they can show while a popup is open).
+  W.float = new Float(W.win, UI_PRELOAD);
+  lockDown(W.float.wc);
 
   // Coffee's own right-click menus everywhere on the frame: cut/copy/paste in
   // the address bar and find box, and the tabs-and-window menu anywhere else
@@ -377,6 +389,7 @@ function createWindow(opts = {}) {
   W.win.on('focus', () => { W = state; state.lastFocus = Date.now(); });
   W.win.on('focus', bind(() => { emit('window', windowState()); updatePeekWatch(); refreshDefaultBrowser(); }));
   W.win.on('blur', bind(() => {
+    W.float.hide('tabcard');
     emit('window', windowState());
     updatePeekWatch();
     if (W.overlay.type !== 'suggest' && W.overlay.type !== 'splitdrag') W.overlay.close();
@@ -404,6 +417,7 @@ function createWindow(opts = {}) {
     const hadPrivate = state.tabs.tabs.some((t) => t.private);
     state.tabs.destroy();
     try { if (!state.overlay.wc.isDestroyed()) state.overlay.wc.close(); } catch { /* already gone */ }
+    state.float.destroy();
     state.win = null;
     const i = winStates.indexOf(state);
     if (i >= 0) winStates.splice(i, 1);
@@ -422,12 +436,13 @@ function createWindow(opts = {}) {
     layout,
     render: (snap) => {
       emit('tabs', snap);
-      W.overlay.update('sidebar', { ...snap, titles: peekTitles(), canTear: canTear() });
+      W.overlay.update('sidebar', { ...snap, titles: peekTitles() });
       scheduleSessionSave();
     },
     activated: (tab, opts = {}) => {
       if (ext) ext.tabSelected(tab);
       if (W.overlay.isOpen()) W.overlay.close();
+      W.float.hide();
       if (tab.url.startsWith(NEWTAB) && !opts.fromPage) {
         // A freshly shown page takes keyboard focus as it attaches and loads,
         // without a 'focus' event, so keep handing focus back to the address
@@ -460,7 +475,7 @@ function createWindow(opts = {}) {
     found: (tab, r) => {
       if (tab === W.tabs.active) emit('find:result', { active: r.activeMatchOrdinal, matches: r.matches });
     },
-    hoverUrl: (tab, url) => { if (tab === W.tabs.active) emit('hover-url', url); },
+    hoverUrl: (tab, url) => showStatus(tab, url),
     contextMenu: (tab, params) => pageMenu(tab, params),
     input: (e, input, tab) => onInput(e, input, tab),
     pageFocus: (tab) => {
@@ -596,7 +611,6 @@ function publicSettings() {
     compactSidebar: !!data.settings.data.compactSidebar,
     tabTitles: data.settings.data.tabTitles !== false,
     extensions: !!ext,
-    canTear: canTear(),
     adblock: s.adblock,
     adblockExceptions: s.adblockExceptions || [],
     showHome: !!s.showHome,
@@ -611,6 +625,12 @@ function openHistory() {
   const existing = W.tabs.tabs.find((t) => t.url.startsWith('coffee://history'));
   if (existing) W.tabs.activate(existing.id);
   else W.tabs.create({ url: 'coffee://history/' });
+}
+
+function openWhatsNew() {
+  const existing = W.tabs.tabs.find((t) => t.url.startsWith('coffee://whats-new'));
+  if (existing) W.tabs.activate(existing.id);
+  else W.tabs.create({ url: 'coffee://whats-new/' });
 }
 
 function openSettings(section) {
@@ -637,12 +657,17 @@ function onInput(e, input, tab) {
   let handled = true;
 
   if (ctrl && !alt) {
-    if (key === 'n' && !shift && multiWindow()) openNewWindow();
+    if (key === 'n' && !shift) openNewWindow();
     else if (key === 't' && !shift) W.tabs.create();
     else if (key === 'n' && shift) W.tabs.create({ private: true });
     else if (key === 't' && shift) W.tabs.reopenClosed();
     else if ((key === 'w' && !shift) || key === 'F4') W.tabs.active && W.tabs.close(W.tabs.activeId);
+    else if (key === 'w' && shift) W.win.close();
+    else if ((key === 'PageDown' || key === 'PageUp') && shift) moveActiveTab(key === 'PageUp' ? -1 : 1);
     else if (key === 'Tab' || key === 'PageDown' || key === 'PageUp') W.tabs.cycle(key === 'PageUp' || (key === 'Tab' && shift) ? -1 : 1);
+    else if (key === 'a' && shift) showTabSearch();
+    else if (key === 'c' && shift) copyPageUrl();
+    else if (key === 'm' && !shift) { if (W.tabs.active) toggleMute(W.tabs.active); }
     else if (/^[1-9]$/.test(key) && !shift) {
       const n = Number(key);
       const t = n === 9 ? W.tabs.tabs[W.tabs.tabs.length - 1] : W.tabs.tabs[n - 1];
@@ -741,8 +766,11 @@ function pageMenu(tab, params) {
   if (params.linkURL) {
     items.push(
       { label: 'Open link in new tab', action: () => W.tabs.create({ url: params.linkURL, background: true, after: tab, private: tab.private }) },
+      { label: 'Open link in split view', icon: 'split', action: () => openLinkInSplit(tab, params.linkURL) },
+      ...(!tab.private ? [{ label: 'Open link in new window', icon: 'window', action: () => openNewWindow(params.linkURL) }] : []),
       { label: 'Open link in private tab', action: () => W.tabs.create({ url: params.linkURL, after: tab, private: true }) },
       { label: 'Copy link address', action: () => clipboard.writeText(params.linkURL) },
+      ...(cleanUrl(params.linkURL) !== params.linkURL ? [{ label: 'Copy clean link', action: () => { clipboard.writeText(cleanUrl(params.linkURL)); toast('Copied link without tracking'); } }] : []),
       sep,
     );
   }
@@ -778,7 +806,9 @@ function pageMenu(tab, params) {
     const short = text.length > 22 ? `${text.slice(0, 22)}…` : text;
     items.push(
       { label: 'Copy', accel: 'Ctrl+C', action: () => wc.copy() },
-      { label: `Search for “${short}”`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) },
+      looksLikeAddress(text)
+        ? { label: `Go to ${short}`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab, private: tab.private }) }
+        : { label: `Search for “${short}”`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab, private: tab.private }) },
       sep,
     );
   }
@@ -811,12 +841,8 @@ function tabMenu(id, x, y) {
   const shown = displayUrl(tab.url);
   showMenu(x, y, [
     { label: 'Reload', action: () => { tab.ensureView(); tab.wc.reload(); } },
-    { label: 'Duplicate', disabled: !shown, action: () => W.tabs.create({ url: shown, after: tab }) },
-    { label: tab.muted ? 'Unmute tab' : 'Mute tab', action: () => {
-      tab.muted = !tab.muted;
-      if (tab.wc) tab.wc.setAudioMuted(tab.muted);
-      W.tabs.changed();
-    } },
+    { label: 'Duplicate', disabled: !shown, action: () => W.tabs.duplicate(tab) },
+    { label: tab.muted ? 'Unmute tab' : 'Mute tab', accel: 'Ctrl+M', action: () => toggleMute(tab) },
     { label: 'Copy link', disabled: !shown, action: () => clipboard.writeText(shown) },
     { label: 'Put to sleep', disabled: W.tabs.shown.has(tab.id) || !tab.wc || tab.pip, action: () => tab.sleep() },
     ...(tab.pip || (tab.wc && tab.playing) ? [
@@ -841,27 +867,35 @@ function windowLabel(state) {
   return title.length > 28 ? `${title.slice(0, 27)}…` : title;
 }
 
-/** Tab menu items for split view and moving between windows (each when turned on). */
+/**
+ * Open a link beside the page it's on. In a split, it takes the other side
+ * (the tab there stays open); otherwise the page and the link split the view.
+ */
+function openLinkInSplit(tab, url) {
+  const t = W.tabs;
+  const fresh = t.create({ url, background: true, after: tab, private: tab.private });
+  let side = 'right';
+  if (t.pair && t.pair.left !== tab.id && t.pair.right === tab.id) side = 'left';
+  t.splitAt(fresh.id, side, tab.id);
+}
+
+/** Tab menu items for split view and moving between windows. */
 function splitAndWindowItems(tab) {
   const items = [];
   const t = W.tabs;
-  if (splitOn()) {
-    const paired = t.pair && (t.pair.left === tab.id || t.pair.right === tab.id);
-    if (paired) {
-      items.push(
-        { label: 'Swap sides', icon: 'swap', action: () => t.swapPanes() },
-        { label: 'Close split view', icon: 'split', action: () => t.unsplit() },
-      );
-    } else {
-      items.push({ label: 'Open beside current tab', icon: 'split', disabled: tab.id === t.activeId || !t.active, action: () => t.split(tab.id) });
-    }
+  const paired = t.pair && (t.pair.left === tab.id || t.pair.right === tab.id);
+  if (paired) {
+    items.push(
+      { label: 'Swap sides', icon: 'swap', action: () => t.swapPanes() },
+      { label: 'Close split view', icon: 'split', action: () => t.unsplit() },
+    );
+  } else {
+    items.push({ label: 'Open beside current tab', icon: 'split', disabled: tab.id === t.activeId || !t.active, action: () => t.split(tab.id) });
   }
-  if (multiWindow()) {
-    const from = W;
-    items.push({ label: 'Move to new window', icon: 'window', disabled: t.tabs.length < 2, action: () => moveTabToNewWindow(from, tab.id) });
-    for (const other of winStates.filter((s) => s !== from && s.win && !s.win.isDestroyed()).slice(0, 4)) {
-      items.push({ label: `Move to window: ${windowLabel(other)}`, action: () => moveTabToWindow(from, tab.id, other, Infinity) });
-    }
+  const from = W;
+  items.push({ label: 'Move to new window', icon: 'window', disabled: t.tabs.length < 2, action: () => moveTabToNewWindow(from, tab.id) });
+  for (const other of winStates.filter((s) => s !== from && s.win && !s.win.isDestroyed()).slice(0, 4)) {
+    items.push({ label: `Move to window: ${windowLabel(other)}`, action: () => moveTabToWindow(from, tab.id, other, Infinity) });
   }
   if (items.length) items.push({ sep: true });
   return items;
@@ -1175,7 +1209,7 @@ function sidebarMenu(x, y, { windowItems = true } = {}) {
   const recent = W.tabs.closed.slice(-5).reverse();
   const items = [
     { label: 'New tab', accel: 'Ctrl+T', icon: 'plus', action: () => W.tabs.create() },
-    ...(multiWindow() ? [{ label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() }] : []),
+    { label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() },
     { label: 'New private tab', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => W.tabs.create({ private: true }) },
     { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', icon: 'reload', disabled: !recent.length, action: () => W.tabs.reopenClosed() },
   ];
@@ -1212,13 +1246,14 @@ function appMenu(x, y, opts = {}) {
   const reopen = () => appMenu(x, y, { reopen: true });
   showMenu(x, y, [
     { label: 'New tab', accel: 'Ctrl+T', icon: 'plus', action: () => t.create() },
-    ...(multiWindow() ? [{ label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() }] : []),
+    { label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() },
     { label: 'New private tab', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => t.create({ private: true }) },
     { sep: true },
     { label: 'History', accel: 'Ctrl+H', icon: 'history', action: openHistory },
     { label: 'Downloads', accel: 'Ctrl+J', icon: 'download', action: () => toggleDownloads() },
     { label: 'Bookmarks', icon: 'bookmarks', action: () => openFolder(BM_ROOT, { x: x - 300, y: y - 6, width: 300, height: 0 }, true) },
     { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', icon: 'reload', disabled: !t.closed.length, action: () => t.reopenClosed() },
+    { label: 'Search tabs', accel: 'Ctrl+Shift+A', icon: 'search', action: showTabSearch },
     { sep: true },
     {
       zoom: { value: tab && tab.zoom ? tab.zoom : 100, fullscreen: fs },
@@ -1232,9 +1267,9 @@ function appMenu(x, y, opts = {}) {
     { label: 'Print…', accel: 'Ctrl+P', icon: 'printer', disabled: !wc, action: () => wc.print() },
     { sep: true },
     { label: popout ? 'Close pop-out video' : 'Pop out video', accel: 'Alt+P', icon: 'pip', disabled: !wc && !pipKept.size, action: () => toggleVideoPopout(tab) },
-    ...(splitOn() ? [t.pair
+    t.pair
       ? { label: 'Close split view', icon: 'split', action: () => t.unsplit() }
-      : { label: 'Split view with previous tab', icon: 'split', disabled: !partner, action: () => t.split(partner) }] : []),
+      : { label: 'Split view with previous tab', icon: 'split', disabled: !partner, action: () => t.split(partner) },
     { sep: true },
     { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: !!s.bookmarksBar, action: toggleBookmarksBar },
     { label: 'Tabs on top', checked: tabsOnTop(), action: toggleTabLayout },
@@ -1261,8 +1296,7 @@ async function chromeEditMenu(params) {
 
 function showEditMenu(params, { f, omni, edit, clip, ui }) {
   const short = clip.length > 24 ? `${clip.slice(0, 24)}…` : clip;
-  const looksLikeAddress = /^[a-z][a-z0-9+.-]*:\/\//i.test(clip) || (!/\s/.test(clip) && /\.[a-z]{2,}(?:[:/?#]|$)/i.test(clip));
-  const pasteGo = looksLikeAddress ? 'Paste and go' : `Paste and search for “${short}”`;
+  const pasteGo = looksLikeAddress(clip) ? 'Paste and go' : `Paste and search for “${short}”`;
   showMenu(params.x, params.y, [
     { label: 'Undo', accel: 'Ctrl+Z', disabled: !f.canUndo, action: edit(() => ui.undo()) },
     { label: 'Redo', accel: 'Ctrl+Y', disabled: !f.canRedo, action: edit(() => ui.redo()) },
@@ -1442,13 +1476,277 @@ function showSuggest({ rect, items, selected }) {
   const height = 12 + items.length * 40 + 2 * M;
   W.overlay.open('suggest', { x: rect.x - M, y: rect.y + rect.height + 6 - M, width: rect.width + 2 * M, height },
     { items, selected },
-    { onPick: (p) => { emit('urlbar:blur'); navigate(p.url, { newTab: p.newTab }); } });
+    { onPick: (p) => {
+      emit('urlbar:blur');
+      if (p.tab && !p.newTab && switchToTab(Number(p.tab))) return;
+      navigate(p.url, { newTab: p.newTab });
+    } });
 }
 
-function showTooltip({ text, x, y, width }) {
-  if (W.overlay.isOpen() && W.overlay.type !== 'tooltip') return;
-  const w = Math.ceil(width) + 22 + 2 * M;
-  W.overlay.open('tooltip', { x: x - M, y: y - 15 - M, width: w, height: 30 + 2 * M }, { text });
+// ---------------------------------------------------------------------------
+// Link status bubble: the address of the link under the pointer, in the
+// bottom corner of the page it's on (the right corner when the pointer is
+// down in the left one).
+// ---------------------------------------------------------------------------
+
+function showStatus(tab, url) {
+  const f = W.float;
+  if (!f) return;
+  if (!url || !tab.view || !W.tabs.visibleIds().includes(tab.id)) {
+    clearTimeout(W.statusTimer);
+    W.statusUrl = '';
+    W.statusLong = false;
+    f.hide('status', 120);
+    return;
+  }
+  const b = tab.view.getBounds();
+  if (b.width < 40 || b.height < 40) return;
+  const c = W.win.getContentBounds();
+  const cur = screen.getCursorScreenPoint();
+  const px = cur.x - c.x;
+  const py = cur.y - c.y;
+  // Like Chrome: resting on the same link a moment shows its whole address.
+  clearTimeout(W.statusTimer);
+  const long = W.statusUrl === url && W.statusLong;
+  W.statusUrl = url;
+  W.statusLong = long;
+  if (!long) {
+    const state = W;
+    W.statusTimer = setTimeout(() => inWindow(state, () => {
+      if (state.statusUrl !== url || !state.float.isShowing('status')) return;
+      state.statusLong = true;
+      showStatus(tab, url);
+    }), 1600);
+  }
+  const maxWidth = Math.round(long ? b.width - 24 : b.width * (b.width < 700 ? 0.8 : 0.5));
+  // Pointer in the bottom-left corner, where the bubble would cover it: use the right one.
+  const right = px < b.x + maxWidth + 24 && py > b.y + b.height - 60;
+  f.show('status', { url, maxWidth, side: right ? 'right' : 'left' }, ({ width, height }) => ({
+    x: right ? b.x + b.width - width : b.x,
+    y: b.y + b.height - height,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Tab hover cards: what a tab is (title, address, preview of the page) when
+// you rest the pointer on it. Strips in the overlay (the compact peek panel)
+// send rects relative to the overlay, so those are moved into the window.
+// ---------------------------------------------------------------------------
+
+function showTabCard({ id, rect, side }, kind) {
+  const tab = W.tabs.get(Number(id));
+  if (!tab || !rect) return;
+  let { x, y, width, height } = rect;
+  if (kind === 'overlay') {
+    const o = W.overlay.view.getBounds();
+    x += o.x;
+    y += o.y;
+  }
+  const s = tab.serialize();
+  const onScreen = W.tabs.visibleIds().includes(tab.id);
+  const t = W.tabs;
+  const below = side === 'below';
+  const card = {
+    title: s.title,
+    url: s.newtab ? '' : s.url,
+    audible: s.audible,
+    muted: s.muted,
+    private: s.private,
+    pip: s.pip,
+    sleeping: s.sleeping && !onScreen && !s.newtab,
+    split: !!t.pair && (t.pair.left === tab.id || t.pair.right === tab.id),
+    // A page you can already see needs no preview.
+    thumb: !onScreen && !s.newtab ? tab.thumb || '' : '',
+    side: below ? 'below' : 'right',
+  };
+  const S = 12; // the card's shadow margin (float.css)
+  W.float.show('tabcard', card, () => (below
+    ? { x: x - S, y: y + height + 2 }
+    : { x: x + width + 2, y: y - S }));
+}
+
+// ---------------------------------------------------------------------------
+// Open tabs everywhere: "Switch to tab" in the address bar, and tab search
+// (Ctrl+Shift+A) across every window.
+// ---------------------------------------------------------------------------
+
+/** Every open tab in every window, as { st, tab }. */
+function allOpenTabs() {
+  const out = [];
+  for (const st of winStates) {
+    if (!st.tabs || !st.win || st.win.isDestroyed()) continue;
+    for (const tab of st.tabs.tabs) out.push({ st, tab });
+  }
+  return out;
+}
+
+/** Bring a tab (in whichever window has it) to the front. */
+function switchToTab(id) {
+  const hit = allOpenTabs().find((x) => x.tab.id === id);
+  if (!hit) return false;
+  const { st } = hit;
+  inWindow(st, () => {
+    if (st.win.isMinimized()) st.win.restore();
+    st.win.focus();
+    st.tabs.activate(id);
+  });
+  return true;
+}
+
+const bareUrl = (u) => String(u || '').replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+
+/**
+ * Address bar suggestions, where pages already open in a tab offer to switch
+ * to it instead of opening them again (Chrome, Firefox and Arc do this).
+ */
+function suggestWithTabs(q, inline) {
+  const items = data.suggest(q, { inline });
+  const query = String(q || '').trim().toLowerCase();
+  if (!query) return items;
+  const cur = W.tabs.active;
+  const priv = !!(cur && cur.private);
+  const open = new Map(); // address -> tab
+  for (const { tab } of allOpenTabs()) {
+    const url = displayUrl(tab.url);
+    if (!url || tab === cur || tab.private !== priv || isInternal(tab.url)) continue;
+    if (!open.has(url)) open.set(url, tab);
+  }
+  if (!open.size) return items;
+  const asTab = (tab) => ({
+    kind: 'tab', title: tab.title || bareUrl(displayUrl(tab.url)), sub: 'Switch to tab', url: displayUrl(tab.url), favicon: tab.favicon, tab: tab.id,
+  });
+  const used = new Set();
+  const out = items.map((it) => {
+    const tab = (it.kind === 'history' || it.kind === 'bookmark') && open.get(it.url);
+    if (!tab || used.has(tab.id)) return it;
+    used.add(tab.id);
+    return asTab(tab);
+  });
+  // Open tabs that match but aren't in the list yet go right after what Enter does.
+  const words = query.split(/\s+/).filter(Boolean);
+  const extra = [];
+  for (const tab of open.values()) {
+    if (used.has(tab.id) || extra.length >= 2) continue;
+    const hay = `${tab.title} ${bareUrl(displayUrl(tab.url))}`.toLowerCase();
+    if (words.every((w) => hay.includes(w))) extra.push(asTab(tab));
+  }
+  let lead = 0;
+  while (lead < out.length && lead < 2 && (out[lead].kind === 'url' || out[lead].inline)) lead++;
+  out.splice(lead, 0, ...extra);
+  return out.slice(0, 9);
+}
+
+function tabSearchItems() {
+  return allOpenTabs()
+    .map(({ st, tab }) => {
+      const s = tab.serialize();
+      return {
+        id: tab.id,
+        title: s.title,
+        url: s.newtab ? '' : s.url,
+        favicon: s.newtab || s.internal ? '' : s.favicon,
+        newtab: s.newtab,
+        active: st === W && tab.id === W.tabs.activeId,
+        audible: s.audible && !s.muted,
+        muted: s.muted,
+        private: s.private,
+        win: st === W ? '' : windowLabel(st),
+        last: st === W && tab.id === W.tabs.activeId ? Infinity : tab.lastActive || 0,
+      };
+    })
+    .sort((a, b) => b.last - a.last)
+    .map(({ last, ...rest }) => rest);
+}
+
+/** Tab search: every open tab, most recently used first; type to filter. */
+function showTabSearch() {
+  if (W.overlay.isOpen('tabsearch')) { W.overlay.close(); return; }
+  const [w] = W.win.getContentSize();
+  const width = Math.min(480, w - 32) + 2 * M;
+  const page = pageBounds().bounds;
+  const count = allOpenTabs().length;
+  const height = 53 + Math.max(2, Math.min(count, 10)) * 46 + 10 + 2 * M;
+  const refresh = () => W.overlay.update('tabsearch', { items: tabSearchItems() });
+  W.overlay.open('tabsearch', { x: page.x + (page.width - width) / 2, y: page.y + 8 - M, width, height },
+    { items: tabSearchItems() },
+    { focus: true, onPick: (p) => {
+      const id = Number(p.close || p.id);
+      if (p.close) {
+        const hit = allOpenTabs().find((x) => x.tab.id === id);
+        if (hit) inWindow(hit.st, () => hit.st.tabs.close(id));
+        if (W.overlay.isOpen('tabsearch')) refresh();
+        return;
+      }
+      switchToTab(id);
+    } });
+}
+
+// ---------------------------------------------------------------------------
+// Copying addresses
+// ---------------------------------------------------------------------------
+
+/** Query parameters that only track where a link was shared or clicked. */
+const TRACKING_PARAM = /^(utm_\w+|fbclid|gclid|gclsrc|dclid|gbraid|wbraid|msclkid|twclid|ttclid|li_fat_id|igshid|igsh|yclid|ysclid|mc_cid|mc_eid|_hsenc|_hsmi|mkt_tok|oly_anon_id|oly_enc_id|vero_id|wickedid|rb_clickid|s_cid|srsltid|ref_src|ref_url|si)$/i;
+/** Hosts where `si` is a share-tracking id (elsewhere it may mean something). */
+const SI_HOSTS = /(^|\.)(youtube\.com|youtu\.be|spotify\.com)$/i;
+
+/** `url` without tracking parameters (Firefox's "Copy clean link"). */
+function cleanUrl(url) {
+  try {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return url;
+    const drop = [...u.searchParams.keys()].filter((k) => TRACKING_PARAM.test(k) && (k.toLowerCase() !== 'si' || SI_HOSTS.test(u.hostname)));
+    if (!drop.length) return url;
+    for (const k of drop) u.searchParams.delete(k);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** Whether text reads as a web address rather than words to search for. */
+function looksLikeAddress(text) {
+  const t = String(text || '').trim();
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(t) || (!/\s/.test(t) && /\.[a-z]{2,}(?:[:/?#]|$)/i.test(t));
+}
+
+/** Ctrl+Shift+C: copy the page's address (Arc and Edge have this). */
+function copyPageUrl() {
+  const tab = W.tabs.active;
+  const url = tab && displayUrl(tab.url);
+  if (!url) return;
+  clipboard.writeText(url);
+  toast('Link copied');
+}
+
+/** A short note at the top of the page that fades by itself. */
+function toast(text) {
+  const f = W.float;
+  if (!f) return;
+  const page = pageBounds().bounds;
+  f.show('toast', { text }, ({ width }) => ({ x: page.x + (page.width - width) / 2, y: page.y + 10 }));
+  f.hide('toast', 1800);
+}
+
+function toggleMute(tab) {
+  tab.muted = !tab.muted;
+  if (tab.wc) tab.wc.setAudioMuted(tab.muted);
+  W.tabs.changed();
+}
+
+/** Ctrl+Shift+PageUp / PageDown: move the tab one place along the strip. */
+function moveActiveTab(dir) {
+  const t = W.tabs;
+  const tab = t.active;
+  if (!tab) return;
+  const i = t.tabs.indexOf(tab) + dir;
+  if (i >= 0 && i < t.tabs.length) t.move(tab.id, i);
+}
+
+/** Middle-click Back / Forward / Reload: that page in a new tab beside this one. */
+function duplicateActive(offset) {
+  const tab = W.tabs.active;
+  if (tab && displayUrl(tab.url)) W.tabs.duplicate(tab, { offset, background: true });
 }
 
 /** The ad blocker exception that covers `host`, if any. */
@@ -1601,7 +1899,7 @@ async function startExtensions() {
     tabs: () => W.tabs,
     windows: () => winStates.filter((s) => s.tabs && s.win && !s.win.isDestroyed()),
     findTab: (wc) => { const f = findTab(wc); return f ? f.tab : null; },
-    newWindow: (url) => (multiWindow() ? openNewWindow(url) : null),
+    newWindow: (url) => openNewWindow(url),
     confirmInstall: confirmExtensionInstall,
   });
   ext = mod;
@@ -1827,14 +2125,6 @@ function setSetting(key, value) {
     case 'restoreSession':
       s.restoreSession = !!value;
       break;
-    case 'multiWindow':
-      s.multiWindow = !!value; // windows already open stay open
-      break;
-    case 'splitView':
-      s.splitView = !!value;
-      // Off: every window goes back to one tab at a time.
-      if (!s.splitView) eachWindow(() => W.tabs.unsplit());
-      break;
     case 'theme': {
       const v = value || {};
       const saved = themes.sanitizeSaved(v.saved !== undefined ? v.saved : s.theme.saved);
@@ -1851,6 +2141,26 @@ function setSetting(key, value) {
   data.settings.save();
   refreshWindows();
   broadcastSettings();
+}
+
+/** -1 / 0 / 1 for version strings like 0.1.16. */
+function compareVersions(a, b) {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d) return Math.sign(d);
+  }
+  return 0;
+}
+
+/** Patch notes for this version and the three before it, newest first. */
+function notesForThisVersion() {
+  const v = app.getVersion();
+  return patchNotes
+    .filter((n) => compareVersions(n.version, v) <= 0)
+    .sort((a, b) => compareVersions(b.version, a.version))
+    .slice(0, 4);
 }
 
 function settingsPayload() {
@@ -1873,13 +2183,12 @@ function settingsPayload() {
     hiddenShortcuts: (s.hiddenShortcuts || []).length,
     sleepMinutes: s.sleepMinutes,
     restoreSession: s.restoreSession,
-    multiWindow: !!s.multiWindow,
-    splitView: !!s.splitView,
     theme: { preset: s.theme.preset, custom: s.theme.custom, saved: themes.sanitizeSaved(s.theme.saved) },
     presets: themes.PRESETS,
     downloadDir: s.downloadDir,
     blockedTotal: s.blockedTotal,
     version: app.getVersion(),
+    whatsNewTitle: (notesForThisVersion().find((n) => n.version === app.getVersion()) || {}).title || '',
     update: updater.status,
     electron: process.versions.electron,
     chrome: process.versions.chrome,
@@ -1911,13 +2220,13 @@ function onBlocked(wcId) {
 // IPC
 // ---------------------------------------------------------------------------
 
-const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete', 'history:clear-range', 'history:clear-site', 'cookies:clear-site', 'adblock:allow', 'browser:set-default']);
-const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list', 'history:sites', 'cookies:sites', 'browser:default']);
+const INTERNAL_SEND = new Set(['nav:go', 'settings:set', 'history:clear', 'data:clear', 'update:check', 'update:install', 'newtab:hide', 'shortcuts:restore', 'welcome:done', 'app:relaunch', 'history:delete', 'history:clear-range', 'history:clear-site', 'cookies:clear-site', 'adblock:allow', 'browser:set-default', 'whatsnew:open']);
+const INTERNAL_INVOKE = new Set(['newtab:data', 'settings:get', 'downloads:choose-dir', 'import:detect', 'import:run', 'history:list', 'history:sites', 'cookies:sites', 'browser:default', 'whatsnew:data']);
 
 /** The window state that owns a sender's chrome or overlay (falls back to the current window). */
 function ownerOf(e) {
   const wc = e.sender;
-  return winStates.find((s) => s.ui === wc || (s.overlay && s.overlay.wc === wc)) || W;
+  return winStates.find((s) => s.ui === wc || (s.overlay && s.overlay.wc === wc) || (s.float && s.float.wc === wc)) || W;
 }
 
 function senderKind(e) {
@@ -1925,6 +2234,7 @@ function senderKind(e) {
   const owner = ownerOf(e);
   if (wc === owner.ui) return 'ui';
   if (owner.overlay && wc === owner.overlay.wc) return 'overlay';
+  if (owner.float && wc === owner.float.wc) return 'float';
   const url = e.senderFrame ? e.senderFrame.url : wc.getURL();
   if (url && url.startsWith('coffee://')) return 'internal';
   return null;
@@ -1942,6 +2252,8 @@ ipcMain.on('cmd', (e, type, p = {}) => {
   }
   const kind = senderKind(e);
   if (!kind || (kind === 'internal' && !INTERNAL_SEND.has(type))) return;
+  // The hint view only reports what it drew.
+  if (kind === 'float' && type !== 'float:size') return;
   inWindow(ownerOf(e), () => runCommand(e, kind, type, p));
 });
 
@@ -1954,7 +2266,7 @@ function runCommand(e, kind, type, p) {
     case 'tab:activate': W.tabs.activate(p.id); break;
     case 'tab:move': W.tabs.move(p.id, p.index); break;
     case 'tab:drag': dragTab(W, p.id, String(p.phase || ''), { strip: p.strip, kind }); break;
-    case 'tab:split': if (splitOn()) W.tabs.split(p.id); break;
+    case 'tab:split': W.tabs.split(p.id); break;
     case 'split:unsplit': W.tabs.unsplit(); break;
     case 'split:swap': W.tabs.swapPanes(); break;
     case 'split:drag': {
@@ -1986,11 +2298,12 @@ function runCommand(e, kind, type, p) {
     case 'update:check': updater.check(); break;
     case 'tab:mute': {
       const t = W.tabs.get(p.id);
-      if (t) { t.muted = !t.muted; if (t.wc) t.wc.setAudioMuted(t.muted); W.tabs.changed(); }
+      if (t) toggleMute(t);
       break;
     }
-    case 'tooltip:show': showTooltip(p); break;
-    case 'tooltip:hide': if (W.overlay.isOpen('tooltip')) W.overlay.close(); break;
+    case 'float:size': W.float.sized(p.seq, Number(p.width) || 0, Number(p.height) || 0); break;
+    case 'tabcard:show': showTabCard(p, kind); break;
+    case 'tabcard:hide': W.float.hide('tabcard'); break;
 
     // navigation
     case 'nav:go': {
@@ -1998,9 +2311,12 @@ function runCommand(e, kind, type, p) {
       if (url) navigate(url, { newTab: !!p.newTab, background: !!p.background });
       break;
     }
-    case 'nav:back': goBack(); break;
-    case 'nav:forward': goForward(); break;
-    case 'nav:reload': reload(!!p.hard); break;
+    case 'nav:back': if (p.newTab) duplicateActive(-1); else goBack(); break;
+    case 'nav:forward': if (p.newTab) duplicateActive(1); else goForward(); break;
+    case 'nav:reload': if (p.newTab) duplicateActive(0); else reload(!!p.hard); break;
+    case 'tab:switch': switchToTab(Number(p.id)); break;
+    case 'tabsearch:open': showTabSearch(); break;
+    case 'whatsnew:open': openWhatsNew(); break;
     case 'nav:stop': { const wc = activeWc(); if (wc) wc.stop(); break; }
     case 'nav:home': navigate(homeUrl(), { newTab: !!p.newTab }); break;
     case 'page:focus': { const t = W.tabs.active; if (t) t.urlbarUntil = 0; const wc = activeWc(); if (wc) wc.focus(); break; }
@@ -2141,7 +2457,8 @@ async function runInvoke(e, type, p) {
         window: windowState(),
         popout: pipKept.size > 0,
       };
-    case 'suggest': return data.suggest(p.q, { inline: p.inline !== false });
+    case 'suggest': return suggestWithTabs(p.q, p.inline !== false);
+    case 'whatsnew:data': return { version: app.getVersion(), notes: notesForThisVersion() };
     case 'newtab:data':
       return { show: data.settings.data.newtabShortcuts !== false, shortcuts: data.shortcuts(8) };
     case 'settings:get': return settingsPayload();
@@ -2177,7 +2494,7 @@ async function runInvoke(e, type, p) {
 // ---------------------------------------------------------------------------
 
 function registerInternalProtocol(ses) {
-  const hosts = new Set(['newtab', 'settings', 'error', 'welcome', 'history']);
+  const hosts = new Set(['newtab', 'settings', 'error', 'welcome', 'history', 'whats-new']);
   ses.protocol.handle('coffee', async (req) => {
     const u = new URL(req.url);
     if (!hosts.has(u.hostname)) return new Response('Not found', { status: 404 });
@@ -2243,7 +2560,6 @@ function dropFullscreen(state, tab) {
  * running. Returns true if it moved.
  */
 function moveTabToWindow(fromState, tabId, toState, index) {
-  if (!multiWindow()) return false;
   if (!fromState || !toState || fromState === toState || !fromState.tabs || !toState.tabs) return false;
   if (!toState.win || toState.win.isDestroyed()) return false;
   const tab = fromState.tabs.get(tabId);
@@ -2263,7 +2579,7 @@ function moveTabToWindow(fromState, tabId, toState, index) {
 
 /** Move a tab into a window of its own, placed at `bounds` (or cascaded from its window). */
 function moveTabToNewWindow(fromState, tabId, bounds) {
-  if (!multiWindow() || !fromState || !fromState.tabs) return false;
+  if (!fromState || !fromState.tabs) return false;
   const tab = fromState.tabs.get(tabId);
   // The only tab in a window is already in a window of its own.
   if (!tab || fromState.tabs.tabs.length < 2) return false;
@@ -2365,14 +2681,11 @@ const NOTHING = { kind: 'none', label: 'Drop here to cancel' };
 /** What dropping the dragged tab at screen point `p` would do. */
 function dragZone(d, p) {
   const target = windowAtPoint(p);
-  if (multiWindow()) {
-    const alone = d.from.tabs.tabs.length < 2;
-    // A window's only tab can't leave it: anywhere but another window, the window goes along.
-    if (alone && (!target || target === d.from)) return { kind: 'place', label: 'Move this window here', rect: windowRectAt(d, p) };
-    if (!target) return { kind: 'new', label: 'New window', rect: windowRectAt(d, p) };
-    if (target !== d.from) return { kind: 'move', state: target, label: 'Move to this window', rect: pageRectOnScreen(target) };
-  }
-  if (target !== d.from || !splitOn()) return NOTHING;
+  const alone = d.from.tabs.tabs.length < 2;
+  // A window's only tab can't leave it: anywhere but another window, the window goes along.
+  if (alone && (!target || target === d.from)) return { kind: 'place', label: 'Move this window here', rect: windowRectAt(d, p) };
+  if (!target) return { kind: 'new', label: 'New window', rect: windowRectAt(d, p) };
+  if (target !== d.from) return { kind: 'move', state: target, label: 'Move to this window', rect: pageRectOnScreen(target) };
   const r = pageRectOnScreen(d.from);
   if (!inRect(p, r)) return NOTHING; // back over its own window's frame
   const side = p.x < r.x + r.width / 2 ? 'left' : 'right';
@@ -2461,7 +2774,7 @@ function dragTick() {
 
 /** The tab strip reports a drag: begin (with its own rect), end (released), cancel. */
 function dragTab(from, tabId, phase, info = {}) {
-  if (!canTear() || !from || !from.tabs) return;
+  if (!from || !from.tabs) return;
   if (phase === 'begin') return startTabDrag(from, tabId, info);
   const d = tabDrag;
   if (!d || d.from !== from || d.tabId !== tabId) return;
@@ -2565,17 +2878,15 @@ function openNewWindow(url) {
 
 /** A window with no tabs yet, cascaded from the current one. Returns its state. */
 function openEmptyWindow(opts) {
-  if (!multiWindow()) return null;
   const from = W;
   return createWindow(opts || { bounds: cascadeFrom(from), maximized: from.win && !from.win.isDestroyed() ? from.win.isMaximized() : undefined });
 }
 
 app.on('second-instance', (_e, argv) => {
   const urls = urlsFromArgv(argv);
-  // Like Chrome: launching Coffee again opens a new window (with multiple
-  // windows on); opening a link from another app adds a tab to the
-  // window you used last.
-  if (multiWindow() && winStates.length && !urls.length) {
+  // Like Chrome: launching Coffee again opens a new window; opening a link
+  // from another app adds a tab to the window you used last.
+  if (winStates.length && !urls.length) {
     openNewWindow();
     return;
   }
@@ -2700,8 +3011,8 @@ app.whenReady().then(async () => {
     else if (!W.tabs.active) W.tabs.activate(W.tabs.tabs[0].id);
   });
 
-  // Other windows from the last session come back only with multiple windows on.
-  if (multiWindow() && data.settings.data.restoreSession && Array.isArray(saved.windows)) {
+  // The other windows from the last session come back too.
+  if (data.settings.data.restoreSession && Array.isArray(saved.windows)) {
     for (const w of saved.windows) {
       const tabs = (w.tabs || []).filter((t) => !String(t.url || '').startsWith('coffee://welcome'));
       if (!tabs.length) continue;

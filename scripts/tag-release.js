@@ -9,6 +9,7 @@
 //     avoids the race.
 const { execFileSync } = require('child_process');
 const pkg = require('../package.json');
+const patchNotes = require('../src/main/patch-notes.js');
 
 const { version } = pkg;
 const tag = `v${version}`;
@@ -19,6 +20,8 @@ const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['
 const fail = (msg) => { console.error(`\n✖ ${msg}\n`); process.exit(1); };
 
 async function main() {
+  // The What's new page shows these; a version without notes would show none.
+  if (!patchNotes.some((n) => n.version === version)) fail(`Add patch notes for ${version} to src/main/patch-notes.js (shown on the What's new page).`);
   if (git('status', '--porcelain')) fail('Commit your changes first (including any refreshed src/main/ubo-resources.json): a release must match a pushed commit.');
   git('fetch', 'origin', '--tags', '--quiet');
   const head = git('rev-parse', 'HEAD');

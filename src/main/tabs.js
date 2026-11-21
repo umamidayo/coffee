@@ -46,6 +46,7 @@ class Tab {
     this.find = null;
     this.playing = false; // media (video or audio) is playing
     this.pip = false;     // a video from this tab is popped out (picture in picture)
+    this.thumb = '';      // small preview of the page for its hover card (memory only)
     this.boundTo = new WeakSet(); // pages this tab listens to (see bind)
   }
 
@@ -117,6 +118,24 @@ class Tab {
     return view;
   }
 
+  /**
+   * Keep a small preview of the page for the tab's hover card. Only a page
+   * on screen can be captured, so this runs as you leave a tab and after a
+   * page you're looking at settles.
+   */
+  captureThumb() {
+    const wc = this.wc;
+    if (!wc || this.url.startsWith(NEWTAB) || this.htmlFullscreen) return;
+    const url = this.url;
+    wc.capturePage().then((img) => {
+      if (!img || img.isEmpty() || this.url !== url) return;
+      const { width } = img.getSize();
+      if (width < 50) return;
+      const small = img.resize({ width: Math.min(width, 544), quality: 'good' });
+      this.thumb = `data:image/jpeg;base64,${small.toJPEG(74).toString('base64')}`;
+    }).catch(() => {});
+  }
+
   applyBackground() {
     if (!this.view) return;
     // Internal pages paint with the theme; the web gets the conventional white.
@@ -134,7 +153,12 @@ class Tab {
     const on = (ev, fn) => wc.on(ev, (...args) => { if (this.wc === wc) fn(...args); });
 
     on('did-start-loading', () => { this.loading = true; changed(); });
-    on('did-stop-loading', () => { this.loading = false; changed(); });
+    on('did-stop-loading', () => {
+      this.loading = false;
+      changed();
+      clearTimeout(this.thumbTimer);
+      this.thumbTimer = setTimeout(() => { if (this.wc === wc && mgr().shown.has(this.id)) this.captureThumb(); }, 1500);
+    });
 
     on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument && !details.isReload) {
@@ -144,6 +168,7 @@ class Tab {
 
     on('did-navigate', (_e, url) => {
       const wasInternal = isInternal(this.url);
+      if (url !== this.url) this.thumb = ''; // a preview of another page
       this.url = url;
       if (wasInternal !== isInternal(url)) this.applyBackground();
       if (isInternal(url)) this.favicon = '';
@@ -471,6 +496,8 @@ class TabManager {
     const prev = this.active;
     if (prev && prev !== tab) {
       this.prevActiveId = prev.id; // the tab you were on, e.g. to split with
+      // Still on screen for this moment: keep what it looked like for its hover card.
+      if (this.shown.has(prev.id)) prev.captureThumb();
       if (prev.find) {
         if (prev.wc) prev.wc.stopFindInPage('clearSelection');
         prev.find = null;
@@ -481,6 +508,36 @@ class TabManager {
     this.syncViews();
     this.hooks.activated(tab, opts);
     this.changed();
+  }
+
+  /**
+   * Open a copy of `tab` next to it, with its back/forward history, like
+   * Chrome. `offset` -1 / 1 lands one page back / forward (middle-click on
+   * Back / Forward), 0 on the same page.
+   */
+  duplicate(tab, { offset = 0, background = false } = {}) {
+    let entries = tab.entries;
+    let index = tab.entryIndex;
+    try {
+      if (tab.wc) {
+        entries = tab.wc.navigationHistory.getAllEntries();
+        index = tab.wc.navigationHistory.getActiveIndex();
+      }
+    } catch { /* fall back to the address alone */ }
+    if (entries && entries.length) {
+      index = Math.min(index ?? entries.length - 1, entries.length - 1) + offset;
+      if (!entries[index]) return null;
+    } else if (offset) {
+      return null;
+    }
+    const url = entries && entries.length ? entries[index].url : tab.url;
+    const copy = this.create({
+      background,
+      after: tab,
+      init: { url, title: entries && entries.length ? entries[index].title : tab.title, favicon: offset ? '' : tab.favicon, entries, entryIndex: index, private: tab.private },
+    });
+    if (background) { copy.ensureView(); this.changed(); } // load it now, like any new background tab
+    return copy;
   }
 
   /** Show `id` beside the active tab (split view). */

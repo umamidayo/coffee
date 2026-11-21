@@ -83,7 +83,7 @@
   }
 
   // ---------- omnibox suggestions ----------
-  const kindIcon = { search: Icons.search, url: Icons.globe, bookmark: Icons.starFilled, history: Icons.history };
+  const kindIcon = { search: Icons.search, url: Icons.globe, bookmark: Icons.starFilled, history: Icons.history, tab: Icons.swap };
   function renderSuggest(data, reopen) {
     const p = panel('suggest', reopen);
     data.items.forEach((it, i) => {
@@ -95,18 +95,94 @@
         ? `<img src="${encodeURI(it.favicon)}" alt="">`
         : kindIcon[it.kind] || Icons.globe;
       r.innerHTML = `<span class="ic">${icon}</span><span class="t">${esc(it.title)}</span><span class="s">${esc(it.sub)}</span>`;
+      if (it.kind === 'tab') r.classList.add('si-tab');
       const img = r.querySelector('img');
       if (img) img.onerror = () => { img.outerHTML = kindIcon[it.kind] || Icons.globe; };
       // mousedown, not click: the omnibox blurs as soon as focus moves here.
-      r.addEventListener('mousedown', (e) => { e.preventDefault(); pick({ url: it.url, newTab: e.button === 1 }); });
+      r.addEventListener('mousedown', (e) => { e.preventDefault(); pick({ url: it.url, newTab: e.button === 1, tab: it.tab }); });
       p.appendChild(r);
     });
   }
 
-  // ---------- tooltip ----------
-  function renderTip(data) {
-    const p = panel('tip');
-    p.textContent = data.text;
+  // ---------- tab search (Ctrl+Shift+A) ----------
+  // Every open tab, most recently used first. Type to filter; Enter or click
+  // switches to it; the × (or middle-click, or Shift+Delete) closes it.
+  let tsr = null; // { items, sel, list, input }
+  function tabSearchMatches() {
+    const words = tsr.input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return tsr.items;
+    return tsr.items.filter((t) => {
+      const hay = `${t.title} ${t.url.replace(/^https?:\/\/(www\.)?/, '')} ${t.win}`.toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+  }
+  function renderTabSearchList() {
+    const shown = tabSearchMatches();
+    tsr.shown = shown;
+    tsr.sel = Math.max(0, Math.min(tsr.sel, shown.length - 1));
+    const list = tsr.list;
+    list.textContent = '';
+    if (!shown.length) {
+      list.innerHTML = '<div class="tsr-empty">No open tabs match</div>';
+      return;
+    }
+    shown.forEach((t, i) => {
+      const r = document.createElement('div');
+      r.className = `tsr-row${i === tsr.sel ? ' sel' : ''}${t.active ? ' current' : ''}`;
+      let host = '';
+      try { host = t.url ? new URL(t.url).host.replace(/^www\./, '') : ''; } catch { host = t.url; }
+      const icon = t.favicon ? `<img src="${encodeURI(t.favicon)}" alt="">` : t.newtab ? Icons.sparkle : Icons.globe;
+      const notes = [
+        t.active ? 'Current tab' : '',
+        t.audible ? 'Playing audio' : t.muted ? 'Muted' : '',
+        t.private ? 'Private' : '',
+        t.win ? `Window: ${t.win}` : '',
+      ].filter(Boolean);
+      r.innerHTML = `<span class="ic">${icon}</span><span class="tx"><span class="t"></span><span class="s"></span></span>`
+        + `<button class="x" title="Close tab">${Icons.close}</button>`;
+      r.querySelector('.t').textContent = t.title || 'New Tab';
+      r.querySelector('.s').textContent = [host, ...notes].filter(Boolean).join(' · ');
+      const img = r.querySelector('img');
+      if (img) img.onerror = () => { img.outerHTML = Icons.globe; };
+      r.addEventListener('mousemove', () => { if (tsr.sel !== i) { tsr.sel = i; markSel(); } });
+      r.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        if (e.target.closest('.x') || e.button === 1) pick({ close: t.id, keepOpen: true });
+        else if (e.button === 0) pick({ id: t.id });
+      });
+      list.appendChild(r);
+    });
+  }
+  function markSel() {
+    [...tsr.list.querySelectorAll('.tsr-row')].forEach((r, i) => r.classList.toggle('sel', i === tsr.sel));
+    const r = tsr.list.children[tsr.sel];
+    if (r) r.scrollIntoView({ block: 'nearest' });
+  }
+  function renderTabSearch(data) {
+    const p = panel('tabsearch');
+    p.innerHTML = `<div class="tsr-head"><span class="ic">${Icons.search}</span><input class="tsr-input" placeholder="Search open tabs" spellcheck="false"><span class="tsr-key">Ctrl+Shift+A</span></div><div class="tsr-list"></div>`;
+    tsr = { items: data.items, sel: 0, list: p.querySelector('.tsr-list'), input: p.querySelector('.tsr-input') };
+    // Start on the tab you were on before this one, so Enter flips back to it.
+    if (tsr.items.length > 1 && tsr.items[0].active) tsr.sel = 1;
+    tsr.input.addEventListener('input', () => { tsr.sel = 0; renderTabSearchList(); });
+    tsr.input.addEventListener('keydown', (e) => {
+      const n = tsr.shown.length;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (n) { tsr.sel = (tsr.sel + (e.key === 'ArrowDown' ? 1 : -1) + n) % n; markSel(); }
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (tsr.shown[tsr.sel]) pick({ id: tsr.shown[tsr.sel].id });
+      } else if (e.key === 'Delete' && e.shiftKey) {
+        e.preventDefault();
+        if (tsr.shown[tsr.sel]) pick({ close: tsr.shown[tsr.sel].id, keepOpen: true });
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        close();
+      }
+    });
+    renderTabSearchList();
+    requestAnimationFrame(() => tsr.input.focus());
   }
 
   // ---------- downloads ----------
@@ -375,7 +451,7 @@
     // Activate on click (not pointerdown) so tabs can still be dragged here.
     const titles = data.titles !== false;
     p.classList.toggle('peek-icons', !titles);
-    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles, activateOn: 'click', canTear: !!data.canTear });
+    peekStrip = new window.TabStrip(p.querySelector('.peek-tabs'), { api, orientation: 'vertical', titles, activateOn: 'click' });
     peekStrip.render(data);
     p.querySelector('.peek-new').onclick = () => api.send('tab:new');
     p.querySelector('.peek-settings').onclick = () => api.send('settings:open');
@@ -429,8 +505,8 @@
     extinstall: renderExtInstall,
     menu: renderMenu,
     suggest: renderSuggest,
-    tooltip: renderTip,
     downloads: renderDownloads,
+    tabsearch: renderTabSearch,
     bookmark: renderBookmark,
     permission: renderPermission,
   };
@@ -453,6 +529,7 @@
     current.data = data;
     if (type === 'downloads') renderDownloads(data, true);
     if (type === 'sidebar' && peekStrip) peekStrip.render(data);
+    if (type === 'tabsearch' && tsr) { tsr.items = data.items; renderTabSearchList(); }
   });
   api.on('overlay:hide', () => {
     dropPeek();

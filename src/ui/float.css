@@ -1,0 +1,53 @@
+/* Passing hints over the page. Sizes are measured here and the view is fit to them. */
+html, body { background: transparent !important; height: 100%; overflow: hidden; user-select: none; pointer-events: none; }
+#root { position: absolute; inset: 0; }
+
+/* ---------- Link status bubble: flush with the page's bottom corner ---------- */
+.status {
+  position: absolute; left: 0; bottom: 0; width: max-content;
+  height: 24px; padding: 0 10px; line-height: 23px;
+  background: var(--raised); color: var(--muted);
+  border: 1px solid var(--line); border-left: 0; border-bottom: 0; border-radius: 0 8px 0 0;
+  font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  animation: status-in .12s var(--ease) both;
+}
+.status.right { left: auto; right: 0; border-left: 1px solid var(--line); border-right: 0; border-radius: 8px 0 0 0; }
+.status b { font-weight: 400; color: var(--text); }
+@keyframes status-in { from { opacity: 0; } }
+
+/* ---------- Tab hover card ---------- */
+.card {
+  position: absolute; left: 12px; top: 12px; width: 272px;
+  background: var(--raised); color: var(--text); border-radius: 12px; overflow: hidden;
+  /* Kept within the 12px margin the view leaves around the card (else it's clipped square). */
+  box-shadow: 0 6px 14px -6px rgb(0 0 0 / .5), 0 1px 4px -1px rgb(0 0 0 / .25), 0 0 0 1px var(--line);
+  transform-origin: left top; animation: card-in .16s var(--ease) both;
+}
+.card.below { animation-name: card-in-below; }
+@keyframes card-in { from { opacity: 0; transform: translateX(-4px) scale(.98); } }
+@keyframes card-in-below { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+
+.card .head { padding: 10px 12px 11px; }
+.card .t {
+  font: 600 13px/1.35 var(--font);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word;
+}
+.card .u { margin-top: 3px; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .u b { font-weight: 400; color: color-mix(in srgb, var(--text) 80%, var(--bg)); }
+.card .notes { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 7px; }
+.card .note { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.card .note svg { width: 13px; height: 13px; }
+.card .note .zz { width: 13px; text-align: center; font-weight: 700; font-style: italic; }
+.card .thumb { border-top: 1px solid var(--line); background: var(--bg); }
+.card .thumb img { display: block; width: 100%; height: auto; max-height: 180px; object-fit: cover; object-position: top; }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: absolute; left: 12px; top: 12px; width: max-content; height: 34px; padding: 0 14px 0 11px;
+  display: flex; align-items: center; gap: 8px; border-radius: 17px;
+  background: var(--raised); color: var(--text); font-size: 12.5px;
+  box-shadow: 0 6px 14px -6px rgb(0 0 0 / .5), 0 0 0 1px var(--line);
+  animation: toast-in .2s var(--ease) both;
+}
+.toast svg { width: 15px; height: 15px; color: var(--accent); stroke-width: 2.2; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(-6px) scale(.97); } }

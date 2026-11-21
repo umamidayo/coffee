@@ -21,7 +21,10 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - Tabs on the **side** as icons, or on **top** with titles. You can also make top tabs icons only.
 - **Compact sidebar.** Side tabs stay hidden until you move the mouse to the left edge of the window.
 - Drag tabs to reorder them, and middle-click to close.
-- Right-click empty tab space to reopen recently closed tabs.
+- Rest the pointer on a tab to see its title, address and a preview of the page, so several tabs from the same site are easy to tell apart.
+- **Search tabs** (`Ctrl+Shift+A`) lists every open tab in every window, most recently used first. Type to filter, then press Enter to switch.
+- Right-click empty tab space to reopen recently closed tabs, or double-click empty space in the side bar for a new tab.
+- **Duplicate** keeps the tab's back/forward history. Middle-click Back, Forward or Reload to open that page in a new tab.
 
 **Bookmarks**
 - Press the ☆ in the address bar (or `Ctrl+D`) to bookmark a page.
@@ -32,7 +35,13 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 
 **Address bar**
 - Start typing and it fills in sites you visit (`goo` → `google.com`). Press Enter to go there.
-- Suggestions come from your history and bookmarks.
+- Suggestions come from your history and bookmarks. Pages that are already open offer **Switch to tab** instead of opening them again.
+- `Ctrl+Enter` turns a word into an address (`coffee` → `www.coffee.com`). `Shift+Delete` removes the highlighted page from your history.
+- Hover a link and its address appears in the bottom corner of the page.
+
+**Copying links**
+- `Ctrl+Shift+C` copies the address of the page you're on.
+- Right-click a link and choose **Copy clean link** to copy it without tracking parameters (`utm_…`, `fbclid` and the like).
 
 **Private browsing**
 - Press `Ctrl+Shift+N` for a private tab. It has a mask badge and a violet address bar.
@@ -56,8 +65,8 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - **Back to tab** in the floating video puts it back in the tab it came from, still playing. If you closed that tab, it opens in a new one.
 
 **Multiple windows and split view**
-- Multiple windows are on by default; split view is off until you turn on **Split view** in **Settings → Tabs** (where you can also turn multiple windows off).
 - `Ctrl+N` opens a new window.
+- Right-click a link and choose **Open link in split view** to read it beside the page you're on.
 - Drag a tab out of the tab strip and a card of it follows your pointer, with a preview of the page and what will happen when you let go:
   - **Left or right half of the page:** that half lights up, and the tab opens there, side by side with the tab you were on.
   - **Another Coffee window:** that window lights up, and a space opens in its tab strip where the tab will land.
@@ -73,7 +82,10 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 **Also**
 - Themes: Coffee, Latte, Dark, Light, Midnight, Matcha, Rosé, OLED, or make your own from four colors.
 - Downloads panel with progress, pause and resume, and *Show in folder*.
-- Find in page, zoom, and full screen.
+- Find in page (it starts with the text you selected), zoom, and full screen.
+- Every toolbar button tells you what it does, and its shortcut, when you hover it.
+
+Curious what changed? **Settings → About → What's new** opens the notes for your version and the three before it.
 
 Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or `Ctrl+,`). Settings are grouped by category, and you can search them.
 
@@ -82,10 +94,15 @@ Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or
 | Action | Keys |
 |---|---|
 | New tab / close tab | `Ctrl+T` / `Ctrl+W` |
+| New window / close window | `Ctrl+N` / `Ctrl+Shift+W` |
 | New private tab | `Ctrl+Shift+N` |
 | Reopen closed tab | `Ctrl+Shift+T` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Go to tab 1–8 / last tab | `Ctrl+1`–`8` / `Ctrl+9` |
+| Search tabs | `Ctrl+Shift+A` |
+| Move tab up / down | `Ctrl+Shift+PgUp` / `Ctrl+Shift+PgDn` |
+| Mute / unmute tab | `Ctrl+M` |
+| Copy page address | `Ctrl+Shift+C` |
 | Address bar | `Ctrl+L` or `F6` |
 | Back / forward | `Alt+←` / `Alt+→` (or mouse side buttons) |
 | Reload | `Ctrl+R` or `F5` |
@@ -111,5 +128,7 @@ npm start           # run from source
 npm run dist        # build the installer into dist/
 npm run release     # publish a new version (bump "version" in package.json, commit, push, set GH_TOKEN)
 ```
+
+Before a release, add the new version's notes to the top of `src/main/patch-notes.js` and drop the oldest so four remain (the What's new page shows this version and the three before it). `npm run release` stops if the version has no notes.
 
 Coffee is free software under the [GNU GPL v3](LICENSE). It includes uBlock Origin's scriptlets; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

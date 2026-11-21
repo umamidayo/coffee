@@ -12,11 +12,20 @@
 
   function iconMarkup(t) {
     if (t.newtab) return `<span class="glyph">${Icons.sparkle}</span>`;
-    if (t.internal) return `<span class="glyph">${/^coffee:\/\/history/.test(t.url) ? Icons.history : Icons.settings}</span>`;
+    if (t.internal) {
+      const icon = /^coffee:\/\/history/.test(t.url) ? Icons.history : /^coffee:\/\/whats-new/.test(t.url) ? Icons.sparkle : Icons.settings;
+      return `<span class="glyph">${icon}</span>`;
+    }
     if (t.favicon) return `<img src="${encodeURI(t.favicon)}" alt="" draggable="false">`;
     if (t.url) return `<span class="letter">${letterFor(t)}</span>`;
     return `<span class="glyph">${Icons.globe}</span>`;
   }
+
+  // Hover cards: the first waits a moment; moving on to the next tab within a
+  // short while shows it straight away (shared by every strip on this page).
+  const CARD_DELAY = 450;
+  const CARD_WARM = 700;
+  let cardWarm = 0;
 
   class TabStrip {
     /**
@@ -27,7 +36,8 @@
      *   titles       show titles next to icons
      *   activateOn   'pointerdown' (instant) | 'click' (lets you drag first)
      *   onHover(node), onLeave()   optional tooltip hooks
-     *   canTear      tabs dragged away from the strip go to another window (or a new one)
+     *   canTear      tabs dragged away from the strip go to split view, another window or a new one (default on)
+     *   hoverCards   show a card (title, address, preview) when the pointer rests on a tab (default on)
      */
     constructor(root, opts) {
       this.root = root;
@@ -36,7 +46,10 @@
       this.activateOn = opts.activateOn || 'pointerdown';
       this.onHover = opts.onHover || (() => {});
       this.onLeave = opts.onLeave || (() => {});
-      this.canTear = !!opts.canTear;
+      this.canTear = opts.canTear !== false;
+      this.hoverCards = opts.hoverCards !== false;
+      this.cardTimer = null;
+      this.cardId = null; // the tab whose card is showing
       this.nodes = new Map();
       this.tabs = [];
       this.snap = { tabs: [], activeId: null };
@@ -69,6 +82,7 @@
     }
 
     destroy() {
+      this.hideCard();
       window.removeEventListener('pointermove', this.onMove);
       window.removeEventListener('pointerup', this.onUp);
       window.removeEventListener('pointercancel', this.onCancel);
@@ -136,7 +150,7 @@
       n.className = 'tab entering';
       n.dataset.id = t.id;
       n.innerHTML = `<div class="tab-ico"><div class="tab-icon"></div>${SPINNER}<span class="audio"></span><span class="priv">${Icons.mask}</span></div>`
-        + `<span class="tab-title"></span><button class="tab-close" tabindex="-1" aria-label="Close tab">${Icons.close}</button>`;
+        + `<span class="tab-title"></span><button class="tab-close" tabindex="-1" aria-label="Close tab" title="Close tab (Ctrl+W)">${Icons.close}</button>`;
       n.addEventListener('animationend', () => n.classList.remove('entering'), { once: true });
       n._icon = n.querySelector('.tab-icon');
       n._audio = n.querySelector('.audio');
@@ -163,7 +177,10 @@
       n.classList.toggle('audible', t.audible && !t.muted);
       n.classList.toggle('muted', t.muted);
       n.classList.toggle('private', !!t.private);
-      if (t.audible || t.muted) n._audio.innerHTML = t.muted ? Icons.mute : Icons.volume;
+      if (t.audible || t.muted) {
+        n._audio.innerHTML = t.muted ? Icons.mute : Icons.volume;
+        n._audio.title = t.muted ? 'Unmute tab' : 'Mute tab';
+      }
       const title = t.title || 'New Tab';
       if (n._title !== title) { n._title = title; n._titleEl.textContent = title; }
     }
@@ -198,6 +215,7 @@
         for (const [id, n] of this.nodes) {
           if (ids.has(id)) continue;
           this.nodes.delete(id);
+          if (this.cardId === id) this.hideCard();
           // Leave the flow immediately so neighbours slide into place.
           n.style.width = `${n.offsetWidth}px`;
           n.style.height = `${n.offsetHeight}px`;
@@ -250,6 +268,32 @@
       requestAnimationFrame(() => this.moveHighlight());
     }
 
+    // ---- hover cards ----------------------------------------------------------
+    showCard(n) {
+      if (!this.hoverCards) return;
+      clearTimeout(this.cardTimer);
+      const delay = Date.now() - cardWarm < CARD_WARM ? 0 : CARD_DELAY;
+      this.cardTimer = setTimeout(() => {
+        if (this.dragging || !n.isConnected || n.classList.contains('leaving') || !n.matches(':hover')) return;
+        const r = n.getBoundingClientRect();
+        this.cardId = Number(n.dataset.id);
+        this.api.send('tabcard:show', {
+          id: this.cardId,
+          rect: { x: r.left, y: r.top, width: r.width, height: r.height },
+          side: this.vertical ? 'right' : 'below',
+        });
+        cardWarm = Date.now();
+      }, delay);
+    }
+
+    hideCard() {
+      clearTimeout(this.cardTimer);
+      if (this.cardId === null) return;
+      this.cardId = null;
+      cardWarm = Date.now();
+      this.api.send('tabcard:hide');
+    }
+
     // ---- interactions -------------------------------------------------------
     activate(id) {
       if (id === this.activeId) return;
@@ -262,6 +306,7 @@
     bind(n) {
       const id = () => Number(n.dataset.id);
       n.addEventListener('pointerdown', (e) => {
+        this.hideCard();
         if (e.target.closest('.tab-close') || e.button !== 0) return;
         if (this.activateOn === 'pointerdown') this.activate(id());
         this.drag = { node: n, id: id(), x0: e.clientX, y0: e.clientY, grab: this.client(e) - this.start(n), active: false, pointer: e.pointerId };
@@ -278,11 +323,12 @@
       n._audio.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.api.send('tab:mute', { id: id() }); });
       n.addEventListener('contextmenu', (e) => {
         e.preventDefault();
+        this.hideCard();
         this.onLeave();
         this.api.send('tab:menu', { id: id(), x: e.clientX, y: e.clientY });
       });
-      n.addEventListener('mouseenter', () => this.onHover(n));
-      n.addEventListener('mouseleave', () => this.onLeave());
+      n.addEventListener('mouseenter', () => { this.onHover(n); this.showCard(n); });
+      n.addEventListener('mouseleave', () => { this.onLeave(); this.hideCard(); });
     }
 
     dragMove(e) {
@@ -294,6 +340,7 @@
         d.active = true;
         d.node._dragged = true;
         this.onLeave();
+        this.hideCard();
         d.node.classList.add('dragging');
         this.root.classList.add('drag-active');
         try { d.node.setPointerCapture(d.pointer); } catch { /* ignore */ }
