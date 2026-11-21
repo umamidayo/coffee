@@ -115,8 +115,10 @@
 }
 .ts-h .tab-ico { width: 28px; height: 28px; }
 .ts-h .tab .spinner { width: 28px; height: 28px; }
+/* Titled top tabs squeezed narrow drop their title and close button.
+   (Icon-only top tabs are always this narrow and keep their corner close badge.) */
 @container (max-width: 64px) {
-  .tab-title, .tab-close { display: none !important; }
+  .ts-titles .tab-title, .ts-titles .tab-close { display: none !important; }
 }
 .ts-h .tab:not(.active):not(:hover) + .tab:not(.active):not(:hover)::before {
   content: ""; position: absolute; left: -3px; top: 8px; bottom: 8px; width: 1px; background: var(--line);
@@ -125,7 +127,8 @@
 /* --- horizontal icon-only tabs (tabs on top, titles off) --- */
 .ts-h:not(.ts-titles) .tab { flex: none; width: 36px; max-width: none; min-width: 0; padding: 0; justify-content: center; }
 .ts-h:not(.ts-titles) .tab .tab-close {
-  position: absolute; top: -4px; right: -4px; width: 15px; height: 15px; border-radius: 50%;
+  /* The strip clips anything above it, so the badge stays within 2px of the tab's edge. */
+  position: absolute; top: -2px; right: -3px; width: 15px; height: 15px; border-radius: 50%;
   background: var(--raised); box-shadow: 0 1px 3px rgb(0 0 0 / .3), 0 0 0 1px var(--line);
   transform: scale(.6);
 }

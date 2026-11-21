@@ -60,10 +60,10 @@
     return a;
   }
 
-  // Private tab: an explanation instead of shortcuts (and no history lookups).
+  // A tab in a private window: an explanation instead of shortcuts (and no history lookups).
   if (new URLSearchParams(location.search).has('private')) {
     document.body.classList.add('private');
-    document.title = 'Private tab';
+    document.title = 'Private window';
     document.getElementById('private-note').hidden = false;
     return;
   }

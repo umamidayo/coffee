@@ -44,8 +44,9 @@ The first time you open Coffee, a quick setup helps you pick a theme, where your
 - Right-click a link and choose **Copy clean link** to copy it without tracking parameters (`utm_…`, `fbclid` and the like).
 
 **Private browsing**
-- Press `Ctrl+Shift+N` for a private tab. It has a mask badge and a violet address bar.
-- Private tabs don't save history, and their cookies and site data are deleted when you close the last one.
+- Press `Ctrl+Shift+N` for a private window. Its frame is tinted violet and the address bar has a mask badge.
+- Every tab in a private window is private, so links you open there stay private. Private and normal tabs never mix: tabs can't be moved between the two kinds of window.
+- Private windows don't save history, and their cookies and site data are deleted when you close the last one. Right-click a link and choose **Open link in private window** to open it there.
 
 **Switching from Chrome?**
 - Bring your bookmarks (with folders and icons) and your history over in one click. This works with Chrome, Edge, Brave and Vivaldi.
@@ -95,7 +96,7 @@ Everything above lives in **Settings** (the ⚙ in the sidebar, the ⋮ menu, or
 |---|---|
 | New tab / close tab | `Ctrl+T` / `Ctrl+W` |
 | New window / close window | `Ctrl+N` / `Ctrl+Shift+W` |
-| New private tab | `Ctrl+Shift+N` |
+| New private window | `Ctrl+Shift+N` |
 | Reopen closed tab | `Ctrl+Shift+T` |
 | Next / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Go to tab 1–8 / last tab | `Ctrl+1`–`8` / `Ctrl+9` |

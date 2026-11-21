@@ -70,6 +70,7 @@ const M = 12; // shadow margin around overlay panels (matches overlay.css)
 function newWindowState() {
   return {
     win: null, ui: null, overlay: null, float: null, tabs: null,
+    private: false, // a private window: every tab in it is private
     fullscreenTab: null,
     peekTimer: null, peekArmed: true, lastFocus: Date.now(),
     omniRect: null, starRect: null, downloadsRect: null, extRect: null,
@@ -177,6 +178,7 @@ function windowState() {
     maximized: W.win.isMaximized(),
     fullscreen: W.win.isFullScreen() && !W.fullscreenTab,
     focused: W.win.isFocused(),
+    private: !!W.private,
   };
 }
 
@@ -250,6 +252,7 @@ function showPeek() {
 
 function toggleTabLayout() { setSetting('tabLayout', tabsOnTop() ? 'vertical' : 'horizontal'); }
 function toggleCompact() { setSetting('compactSidebar', !data.settings.data.compactSidebar); }
+function toggleTabTitles() { setSetting('tabTitles', data.settings.data.tabTitles === false); }
 
 // Split view metrics (mirrored in src/ui/ui.css): the gap between the two
 // tabs holds a draggable divider; a thin bar above each tab marks the active one.
@@ -317,6 +320,7 @@ function createWindow(opts = {}) {
   const s = data.settings.data;
   const b = opts.bounds || s.windowBounds || {};
   const state = newWindowState();
+  state.private = !!opts.private;
   winStates.push(state);
   W = state;
   W.win = new BrowserWindow({
@@ -328,7 +332,7 @@ function createWindow(opts = {}) {
     minHeight: 360,
     frame: false,
     show: false,
-    title: 'Coffee',
+    title: opts.private ? 'Coffee (Private)' : 'Coffee',
     icon: path.join(ROOT, '..', 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     backgroundColor: theme.vars['--bg'],
     webPreferences: {
@@ -340,6 +344,8 @@ function createWindow(opts = {}) {
     },
   });
   W.ui = W.win.webContents;
+  // The frame page's <title> would replace "(Private)" in the taskbar and Alt+Tab.
+  if (state.private) W.win.on('page-title-updated', (e) => e.preventDefault());
   W.ui.loadFile(path.join(ROOT, 'ui', 'index.html'));
   if (opts.maximized !== undefined ? opts.maximized : s.maximized) W.win.maximize();
 
@@ -503,7 +509,7 @@ function createWindow(opts = {}) {
   };
   // Each hook runs against this window's own state.
   const boundHooks = Object.fromEntries(Object.entries(hooks).map(([k, fn]) => [k, bind(fn)]));
-  W.tabs = new TabManager(W.win, webSession, boundHooks);
+  W.tabs = new TabManager(W.win, webSession, boundHooks, { private: state.private });
   // Leave the new window current: it's the one in front after it's created.
   W = state;
   return state;
@@ -622,18 +628,21 @@ function publicSettings() {
 
 /** Open the history page, reusing an open one. */
 function openHistory() {
+  if (W.private) return inNormalWindow(openHistory);
   const existing = W.tabs.tabs.find((t) => t.url.startsWith('coffee://history'));
   if (existing) W.tabs.activate(existing.id);
   else W.tabs.create({ url: 'coffee://history/' });
 }
 
 function openWhatsNew() {
+  if (W.private) return inNormalWindow(openWhatsNew);
   const existing = W.tabs.tabs.find((t) => t.url.startsWith('coffee://whats-new'));
   if (existing) W.tabs.activate(existing.id);
   else W.tabs.create({ url: 'coffee://whats-new/' });
 }
 
 function openSettings(section) {
+  if (W.private) return inNormalWindow(() => openSettings(section));
   const url = `coffee://settings/${section ? `#${String(section).replace(/[^a-z-]/g, '')}` : ''}`;
   const existing = W.tabs.tabs.find((t) => t.url.startsWith('coffee://settings'));
   if (existing) {
@@ -659,7 +668,7 @@ function onInput(e, input, tab) {
   if (ctrl && !alt) {
     if (key === 'n' && !shift) openNewWindow();
     else if (key === 't' && !shift) W.tabs.create();
-    else if (key === 'n' && shift) W.tabs.create({ private: true });
+    else if (key === 'n' && shift) openPrivateWindow();
     else if (key === 't' && shift) W.tabs.reopenClosed();
     else if ((key === 'w' && !shift) || key === 'F4') W.tabs.active && W.tabs.close(W.tabs.activeId);
     else if (key === 'w' && shift) W.win.close();
@@ -765,10 +774,10 @@ function pageMenu(tab, params) {
   }
   if (params.linkURL) {
     items.push(
-      { label: 'Open link in new tab', action: () => W.tabs.create({ url: params.linkURL, background: true, after: tab, private: tab.private }) },
+      { label: 'Open link in new tab', action: () => W.tabs.create({ url: params.linkURL, background: true, after: tab }) },
       { label: 'Open link in split view', icon: 'split', action: () => openLinkInSplit(tab, params.linkURL) },
       ...(!tab.private ? [{ label: 'Open link in new window', icon: 'window', action: () => openNewWindow(params.linkURL) }] : []),
-      { label: 'Open link in private tab', action: () => W.tabs.create({ url: params.linkURL, after: tab, private: true }) },
+      ...(!W.private ? [{ label: 'Open link in private window', icon: 'mask', action: () => openInPrivateWindow(params.linkURL) }] : []),
       { label: 'Copy link address', action: () => clipboard.writeText(params.linkURL) },
       ...(cleanUrl(params.linkURL) !== params.linkURL ? [{ label: 'Copy clean link', action: () => { clipboard.writeText(cleanUrl(params.linkURL)); toast('Copied link without tracking'); } }] : []),
       sep,
@@ -807,8 +816,8 @@ function pageMenu(tab, params) {
     items.push(
       { label: 'Copy', accel: 'Ctrl+C', action: () => wc.copy() },
       looksLikeAddress(text)
-        ? { label: `Go to ${short}`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab, private: tab.private }) }
-        : { label: `Search for “${short}”`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab, private: tab.private }) },
+        ? { label: `Go to ${short}`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) }
+        : { label: `Search for “${short}”`, action: () => W.tabs.create({ url: data.toUrl(text), after: tab }) },
       sep,
     );
   }
@@ -873,7 +882,7 @@ function windowLabel(state) {
  */
 function openLinkInSplit(tab, url) {
   const t = W.tabs;
-  const fresh = t.create({ url, background: true, after: tab, private: tab.private });
+  const fresh = t.create({ url, background: true, after: tab });
   let side = 'right';
   if (t.pair && t.pair.left !== tab.id && t.pair.right === tab.id) side = 'left';
   t.splitAt(fresh.id, side, tab.id);
@@ -894,7 +903,7 @@ function splitAndWindowItems(tab) {
   }
   const from = W;
   items.push({ label: 'Move to new window', icon: 'window', disabled: t.tabs.length < 2, action: () => moveTabToNewWindow(from, tab.id) });
-  for (const other of winStates.filter((s) => s !== from && s.win && !s.win.isDestroyed()).slice(0, 4)) {
+  for (const other of winStates.filter((s) => s !== from && s.win && !s.win.isDestroyed() && s.private === from.private).slice(0, 4)) {
     items.push({ label: `Move to window: ${windowLabel(other)}`, action: () => moveTabToWindow(from, tab.id, other, Infinity) });
   }
   if (items.length) items.push({ sep: true });
@@ -1029,9 +1038,12 @@ function returnKept(view) {
     bringForward(home);
     return;
   }
-  const state = (W.win && !W.win.isDestroyed() && winStates.includes(W)) ? W : (winStates[winStates.length - 1] || createWindow());
+  // Back into a window of its own kind (a private page only goes to a private window).
+  const priv = !!origin.private;
+  const fits = (s) => s.win && !s.win.isDestroyed() && s.tabs && s.private === priv;
+  const state = (winStates.includes(W) && fits(W)) ? W : ([...winStates].reverse().find(fits) || createWindow({ private: priv }));
   inWindow(state, () => {
-    const tab = state.tabs.create({ background: true, init: { url: wc.getURL(), title: origin.title, favicon: origin.favicon, private: !!origin.private } });
+    const tab = state.tabs.create({ background: true, init: { url: wc.getURL(), title: origin.title, favicon: origin.favicon } });
     tab.muted = !!origin.muted;
     tab.takeView(view, origin);
     state.tabs.activate(tab.id);
@@ -1210,7 +1222,7 @@ function sidebarMenu(x, y, { windowItems = true } = {}) {
   const items = [
     { label: 'New tab', accel: 'Ctrl+T', icon: 'plus', action: () => W.tabs.create() },
     { label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() },
-    { label: 'New private tab', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => W.tabs.create({ private: true }) },
+    { label: 'New private window', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => openPrivateWindow() },
     { label: 'Reopen closed tab', accel: 'Ctrl+Shift+T', icon: 'reload', disabled: !recent.length, action: () => W.tabs.reopenClosed() },
   ];
   if (recent.length) {
@@ -1247,7 +1259,7 @@ function appMenu(x, y, opts = {}) {
   showMenu(x, y, [
     { label: 'New tab', accel: 'Ctrl+T', icon: 'plus', action: () => t.create() },
     { label: 'New window', accel: 'Ctrl+N', icon: 'window', action: () => openNewWindow() },
-    { label: 'New private tab', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => t.create({ private: true }) },
+    { label: 'New private window', accel: 'Ctrl+Shift+N', icon: 'mask', action: () => openPrivateWindow() },
     { sep: true },
     { label: 'History', accel: 'Ctrl+H', icon: 'history', action: openHistory },
     { label: 'Downloads', accel: 'Ctrl+J', icon: 'download', action: () => toggleDownloads() },
@@ -1274,6 +1286,7 @@ function appMenu(x, y, opts = {}) {
     { label: 'Bookmarks bar', accel: 'Ctrl+Shift+B', checked: !!s.bookmarksBar, action: toggleBookmarksBar },
     { label: 'Tabs on top', checked: tabsOnTop(), action: toggleTabLayout },
     { label: 'Compact sidebar', checked: compactSidebar(), disabled: tabsOnTop(), action: toggleCompact },
+    { label: 'Show tab titles', checked: s.tabTitles !== false, action: toggleTabTitles },
     { sep: true },
     { label: 'Extensions', icon: 'puzzle', action: () => (ext ? showExtensionsPanel() : openSettings('extensions')) },
     { label: 'Settings', accel: 'Ctrl+,', icon: 'settings', action: () => openSettings() },
@@ -1638,6 +1651,7 @@ function suggestWithTabs(q, inline) {
 
 function tabSearchItems() {
   return allOpenTabs()
+    .filter(({ st }) => st.private === W.private) // private and normal tabs stay apart, as in Chrome
     .map(({ st, tab }) => {
       const s = tab.serialize();
       return {
@@ -2261,7 +2275,10 @@ function runCommand(e, kind, type, p) {
   p = p || {};
   switch (type) {
     // tabs
-    case 'tab:new': W.tabs.create({ ...(p.url ? { url: data.toUrl(p.url) } : {}), private: !!p.private }); break;
+    case 'tab:new':
+      if (p.private && !W.private) openPrivateWindow(p.url ? data.toUrl(p.url) : undefined);
+      else W.tabs.create(p.url ? { url: data.toUrl(p.url) } : {});
+      break;
     case 'tab:close': W.tabs.close(p.id); break;
     case 'tab:activate': W.tabs.activate(p.id); break;
     case 'tab:move': W.tabs.move(p.id, p.index); break;
@@ -2531,7 +2548,7 @@ function urlsFromArgv(argv) {
  * builds read; any other windows go under `windows`, with their position.
  */
 function saveAllSessions() {
-  const [first, ...rest] = winStates.filter((s) => s.tabs && s.win && !s.win.isDestroyed());
+  const [first, ...rest] = winStates.filter((s) => s.tabs && s.win && !s.win.isDestroyed() && !s.private);
   if (!first) return;
   const main = first.tabs.sessionData();
   const others = rest.map((s) => ({
@@ -2561,6 +2578,7 @@ function dropFullscreen(state, tab) {
  */
 function moveTabToWindow(fromState, tabId, toState, index) {
   if (!fromState || !toState || fromState === toState || !fromState.tabs || !toState.tabs) return false;
+  if (fromState.private !== toState.private) return false; // private and normal tabs never share a window
   if (!toState.win || toState.win.isDestroyed()) return false;
   const tab = fromState.tabs.get(tabId);
   if (!tab) return false;
@@ -2587,7 +2605,7 @@ function moveTabToNewWindow(fromState, tabId, bounds) {
   const placed = bounds || cascadeFrom(fromState);
   const moved = inWindow(fromState, () => fromState.tabs.release(tabId));
   if (!moved) return false;
-  const state = createWindow({ bounds: placed, maximized: bounds ? false : fromState.win.isMaximized() });
+  const state = createWindow({ bounds: placed, maximized: bounds ? false : fromState.win.isMaximized(), private: fromState.private });
   inWindow(state, () => state.tabs.adopt(moved, 0));
   return true;
 }
@@ -2680,7 +2698,9 @@ const NOTHING = { kind: 'none', label: 'Drop here to cancel' };
 
 /** What dropping the dragged tab at screen point `p` would do. */
 function dragZone(d, p) {
-  const target = windowAtPoint(p);
+  // A window of the other kind (private / normal) can't take the tab: over it, the tab gets a new window.
+  const under = windowAtPoint(p);
+  const target = under && under.private === d.from.private ? under : null;
   const alone = d.from.tabs.tabs.length < 2;
   // A window's only tab can't leave it: anywhere but another window, the window goes along.
   if (alone && (!target || target === d.from)) return { kind: 'place', label: 'Move this window here', rect: windowRectAt(d, p) };
@@ -2876,10 +2896,50 @@ function openNewWindow(url) {
   return state;
 }
 
+/**
+ * A private window (Ctrl+Shift+N): every tab in it is private, so a link
+ * clicked there can never open outside private browsing.
+ */
+function openPrivateWindow(url) {
+  const state = openEmptyWindow({ private: true });
+  inWindow(state, () => state.tabs.create(url ? { url } : {}));
+  return state;
+}
+
+/** "Open link in private window": a new tab in the private window used last, or a new private window. */
+function openInPrivateWindow(url) {
+  const state = winStates
+    .filter((s) => s.private && s.win && !s.win.isDestroyed() && s.tabs)
+    .sort((a, b) => (b.lastFocus || 0) - (a.lastFocus || 0))[0];
+  if (!state) return openPrivateWindow(url);
+  inWindow(state, () => state.tabs.create({ url }));
+  bringForward(state);
+  return state;
+}
+
+/**
+ * Run `fn` in a normal window: the current one, the normal window used last,
+ * or a new one. Settings, History and links from other apps never open in a
+ * private window.
+ */
+function inNormalWindow(fn) {
+  let state = !W.private && W.win && !W.win.isDestroyed() ? W : winStates
+    .filter((s) => !s.private && s.win && !s.win.isDestroyed() && s.tabs)
+    .sort((a, b) => (b.lastFocus || 0) - (a.lastFocus || 0))[0];
+  if (!state) state = openEmptyWindow({ private: false });
+  const r = inWindow(state, fn);
+  if (state.win.isMinimized()) state.win.restore();
+  state.win.focus();
+  return r;
+}
+
 /** A window with no tabs yet, cascaded from the current one. Returns its state. */
 function openEmptyWindow(opts) {
   const from = W;
-  return createWindow(opts || { bounds: cascadeFrom(from), maximized: from.win && !from.win.isDestroyed() ? from.win.isMaximized() : undefined });
+  const placed = { bounds: cascadeFrom(from), maximized: from.win && !from.win.isDestroyed() ? from.win.isMaximized() : undefined };
+  // Only `private` given: place it like any new window.
+  if (opts && Object.keys(opts).length === 1 && 'private' in opts) return createWindow({ ...placed, private: opts.private });
+  return createWindow(opts || placed);
 }
 
 app.on('second-instance', (_e, argv) => {
@@ -2893,9 +2953,7 @@ app.on('second-instance', (_e, argv) => {
   // No window left (a popped-out video kept the app running): open one.
   if (!winStates.length) { inWindow(createWindow(), () => { if (urls.length) for (const u of urls) W.tabs.create({ url: u }); else W.tabs.create(); }); return; }
   if (!W.win || W.win.isDestroyed()) return;
-  if (W.win.isMinimized()) W.win.restore();
-  W.win.focus();
-  for (const u of urls) W.tabs.create({ url: u });
+  inNormalWindow(() => { for (const u of urls) W.tabs.create({ url: u }); });
 });
 
 app.setAppUserModelId('app.coffee.browser');
@@ -2919,7 +2977,7 @@ const sessionCookiesFile = () => path.join(app.getPath('userData'), 'session-coo
 async function saveSessionCookies() {
   const file = sessionCookiesFile();
   try {
-    if (!webSession || !data.settings.data.restoreSession || !safeStorage.isEncryptionAvailable()) {
+    if (!webSession || !data.settings.data.restoreSession || !(await safeStorage.isAsyncEncryptionAvailable())) {
       fs.rmSync(file, { force: true });
       return;
     }
@@ -2928,7 +2986,7 @@ async function saveSessionCookies() {
       secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
     }));
     const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, safeStorage.encryptString(JSON.stringify(list)));
+    fs.writeFileSync(tmp, await safeStorage.encryptStringAsync(JSON.stringify(list)));
     fs.renameSync(tmp, file);
   } catch (err) {
     console.error('Could not save sign-ins:', err.message);
@@ -2939,9 +2997,13 @@ async function saveSessionCookies() {
 async function restoreSessionCookies() {
   const file = sessionCookiesFile();
   let list = [];
+  let reEncrypt = false;
   try {
-    if (!data.settings.data.restoreSession || !fs.existsSync(file) || !safeStorage.isEncryptionAvailable()) return;
-    list = JSON.parse(safeStorage.decryptString(fs.readFileSync(file)));
+    if (!data.settings.data.restoreSession || !fs.existsSync(file) || !(await safeStorage.isAsyncEncryptionAvailable())) return;
+    // Also reads files written by the older synchronous API (same format).
+    const { result, shouldReEncrypt } = await safeStorage.decryptStringAsync(fs.readFileSync(file));
+    list = JSON.parse(result);
+    reEncrypt = shouldReEncrypt;
   } catch { return; } // unreadable (e.g. a different Windows user): start fresh
   if (!Array.isArray(list)) return;
   await Promise.all(list.map((c) => webSession.cookies.set({
@@ -2949,6 +3011,8 @@ async function restoreSessionCookies() {
     name: c.name, value: c.value, path: c.path, secure: c.secure, httpOnly: c.httpOnly, sameSite: c.sameSite,
     ...(c.hostOnly ? {} : { domain: c.domain }),
   }).catch(() => { /* a cookie the site has since replaced or that's no longer valid */ })));
+  // The encryption key was rotated: save them again under the current one.
+  if (reEncrypt) saveSessionCookies();
 }
 
 /** Everything that must reach the disk before Coffee closes (bounded, so quitting never hangs). */

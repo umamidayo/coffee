@@ -341,3 +341,8 @@ body.drop-target #topbar, body.drop-target #sidebar, body.drop-target #tabstrip 
 
 /* Pop-out video button: accented while a video is popped out. */
 #omni-pip.on { color: var(--accent); }
+
+/* ---------- Private window: the whole frame is tinted, not just a tab ---------- */
+body.private-window { background: color-mix(in srgb, var(--private) 13%, var(--bg)); }
+/* Every tab here is private: no need for a badge on each one. */
+body.private-window .tab .priv { display: none; }

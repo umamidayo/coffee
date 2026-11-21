@@ -35,7 +35,7 @@
   $('omni-star').innerHTML = Icons.star;
   $('omni-pip').innerHTML = Icons.pip;
   $('omni-private').innerHTML = `${Icons.mask}<span>Private</span>`;
-  $('omni-private').title = "Private tab: history isn't saved, and cookies are deleted when you close all private tabs";
+  $('omni-private').title = "Private window: history isn't saved, and cookies and site data are deleted when you close all private windows";
   $('downloads-btn').insertAdjacentHTML('afterbegin', Icons.download);
   $('menu-btn').innerHTML = Icons.menu;
   $('ext-btn').innerHTML = Icons.puzzle;
@@ -99,6 +99,7 @@
   $('win-close').onclick = () => api.send('win:close');
   function applyWindow(w) {
     document.body.classList.toggle('fullscreen', !!w.fullscreen);
+    document.body.classList.toggle('private-window', !!w.private);
     document.body.classList.toggle('blurred', !w.focused);
     $('win-max').innerHTML = w.maximized ? Icons.restore : Icons.maximize;
     $('win-max').setAttribute('aria-label', w.maximized ? 'Restore' : 'Maximize');

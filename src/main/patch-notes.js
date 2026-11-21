@@ -3,13 +3,43 @@
 // opened from Settings → About).
 //
 // Newest first. Keep the version being released plus the three before it
-// (Settings shows at most four); drop older ones when you add a new one.
+// (the page shows at most four); drop older ones when you add a new one.
 // `npm run release` refuses to publish a version that has no notes here.
 //
 // Write for people using Coffee, not for developers: what they can do now
 // and what got better, in plain words.
 
 module.exports = [
+  {
+    version: '0.1.17',
+    date: '2026-11-20',
+    title: 'Private windows, and a lighter ad blocker',
+    sections: [
+      {
+        heading: 'Private windows',
+        items: [
+          'Ctrl+Shift+N now opens a private window instead of a private tab. Everything you open from it stays private: links, new tabs, duplicates and bookmarks.',
+          'Private and normal tabs never mix. A private window has a violet frame and "(Private)" in its title, and tabs can\'t be moved between private and normal windows.',
+          'Right-click a link and choose "Open link in private window" to open it in your private window.',
+          'Settings, History and What\'s new always open in a normal window.',
+        ],
+      },
+      {
+        heading: 'Faster and lighter',
+        items: [
+          'The ad blocker uses about 130 MB less memory. Updating the filter lists now happens in the background without leaving that memory behind.',
+          'Turning ad blocking off now frees its memory too.',
+        ],
+      },
+      {
+        heading: 'Also',
+        items: [
+          'Tabs on top with icons only now show a close button when you hover them.',
+          'The ⋮ menu has "Show tab titles", the same switch as in Settings.',
+        ],
+      },
+    ],
+  },
   {
     version: '0.1.16',
     date: '2026-11-20',
@@ -79,34 +109,6 @@ module.exports = [
       {
         items: [
           'The setup wizard has Coffee artwork, a new welcome screen, and a finish screen that can open Coffee right away.',
-        ],
-      },
-    ],
-  },
-  {
-    version: '0.1.13',
-    date: '2026-11-20',
-    title: 'Windows, split view and pop-out video',
-    sections: [
-      {
-        heading: 'Multiple windows and split view',
-        items: [
-          'Drag a tab out of the strip: a card follows your pointer and shows where it will land, beside the current tab, in another window or in a new one.',
-          'In split view either side can be the active one, and you can drag the divider to resize.',
-        ],
-      },
-      {
-        heading: 'Pop-out video',
-        items: [
-          'Alt+P (or the button in the address bar) pops a video out into a small floating window that stays on top.',
-          'It keeps playing when you go back, follow a link, or close the tab, and "Back to tab" puts it back where it came from.',
-        ],
-      },
-      {
-        heading: 'Menus',
-        items: [
-          'A regrouped ⋮ menu with icons and zoom and full screen controls.',
-          'Coffee\'s own right-click menus on the title bar, empty tab space, the address bar, the find box, and Back / Forward.',
         ],
       },
     ],

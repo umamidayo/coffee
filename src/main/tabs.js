@@ -275,7 +275,7 @@ class Tab {
         };
       }
       if (/^https?:|^about:blank/.test(url) || (isInternal(url) && !fromWeb())) {
-        mgr().create({ url, background: disposition === 'background-tab', after: this, private: this.private });
+        mgr().create({ url, background: disposition === 'background-tab', after: this });
       }
       return { action: 'deny' };
     });
@@ -399,10 +399,12 @@ class Tab {
 }
 
 class TabManager {
-  constructor(win, ses, hooks) {
+  /** `priv`: a private window. Every tab in it is private, and only its tabs are. */
+  constructor(win, ses, hooks, { private: priv = false } = {}) {
     this.win = win;
     this.session = ses;
     this.hooks = hooks;
+    this.private = !!priv;
     this.tabs = [];
     this.activeId = null;
     this.closed = []; // for "reopen closed tab"
@@ -464,9 +466,12 @@ class TabManager {
     this.hooks.layout();
   }
 
-  create({ url = NEWTAB, background = false, after = null, index = null, init = null, private: priv = false } = {}) {
+  create({ url = NEWTAB, background = false, after = null, index = null, init = null } = {}) {
+    // Whether a tab is private is up to its window, never the caller: a link
+    // from a private page can't land in a normal window, or the other way round.
+    const priv = this.private;
     if (priv && url === NEWTAB) url = NEWTAB_PRIVATE;
-    const tab = new Tab(this, init || { url, private: priv });
+    const tab = new Tab(this, init ? { ...init, private: priv } : { url, private: priv });
     let i = this.tabs.length;
     if (index !== null) i = index;
     else if (after) {
