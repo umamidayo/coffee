@@ -194,6 +194,7 @@ body.private-active #loading-bar .fill { background: linear-gradient(90deg, tran
 }
 #find-count { color: var(--muted); font-size: 12px; padding: 0 8px; font-variant-numeric: tabular-nums; }
 #find.none #find-count { color: var(--danger); }
+#find-list.on { color: var(--accent); background: var(--accent-soft); }
 
 /* Downloads ring */
 #downloads-btn .ring {

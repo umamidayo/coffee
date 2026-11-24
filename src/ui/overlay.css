@@ -127,6 +127,30 @@ body.t-sidebar #root { inset: 0 12px 0 0; }
 .si .s { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
 .si .s::before { content: "—"; margin-right: 8px; color: var(--faint); }
 
+/* ---------- Find in page: all matches ---------- */
+.findlist { display: flex; flex-direction: column; }
+.fl-head { flex: none; height: 40px; display: flex; align-items: center; padding: 0 14px; color: var(--muted); font-size: 12px; border-bottom: 1px solid var(--line); }
+.fl-list { flex: 1; overflow-y: auto; padding: 4px 6px 6px; scrollbar-width: thin; }
+.fl-empty { height: 30px; display: grid; place-items: center; color: var(--muted); font-size: 12.5px; }
+.fl-sec {
+  display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px; color: var(--muted);
+  font-size: 11.5px; font-weight: 600; position: sticky; top: -4px; background: var(--raised);
+}
+.fl-sec span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fl-sec b { font-weight: 500; color: var(--faint); font-variant-numeric: tabular-nums; }
+.fl-row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px 0 14px; border-radius: 7px; font-size: 12.5px; cursor: default; }
+.fl-row:hover { background: var(--hover); }
+/* Scrolled-to rows stop below the sticky heading instead of hiding under it (it would take their clicks). */
+.fl-row { scroll-margin-top: 30px; }
+.fl-row.sel { background: var(--accent-soft); }
+.fl-n { flex: none; min-width: 22px; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+.fl-t { flex: 1; min-width: 0; display: flex; white-space: pre; overflow: hidden; }
+/* The words before the match shrink from the left so the match itself stays in view. */
+.fl-pre { flex: 0 1 auto; max-width: 45%; min-width: 0; overflow: hidden; direction: rtl; text-overflow: ellipsis; color: var(--muted); }
+.fl-post { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fl-t mark { flex: none; background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; }
+.fl-row.sel mark { background: var(--accent); color: var(--raised); }
+
 /* ---------- Downloads ---------- */
 .dl-head { display: flex; align-items: center; height: 50px; padding: 0 10px 0 16px; }
 .dl-head h1 { flex: 1; margin: 0; font: 600 14px/1 var(--font-display); }

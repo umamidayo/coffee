@@ -317,9 +317,10 @@
           this.activate(id());
         });
       }
-      n.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); this.api.send('tab:close', { id: id() }); } });
+      // detail > 1: the 2nd click of a double-click lands on the neighbour that slid into place; don't close it too.
+      n.addEventListener('auxclick', (e) => { if (e.button === 1) { e.preventDefault(); if (e.detail < 2) this.api.send('tab:close', { id: id() }); } });
       n.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });
-      n.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); this.api.send('tab:close', { id: id() }); });
+      n.querySelector('.tab-close').addEventListener('click', (e) => { e.stopPropagation(); if (e.detail < 2) this.api.send('tab:close', { id: id() }); });
       n._audio.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.api.send('tab:mute', { id: id() }); });
       n.addEventListener('contextmenu', (e) => {
         e.preventDefault();

@@ -11,6 +11,28 @@
 
 module.exports = [
   {
+    version: '0.1.19',
+    date: '2026-11-24',
+    title: 'See every match at once',
+    sections: [
+      {
+        heading: 'Find in page',
+        items: [
+          "Find in page (Ctrl+F) now lists every match under the find box, with the words around it, grouped under the heading it sits in.",
+          "Click a match in the list to jump straight to it. The page scrolls it into view even if the list was covering it.",
+          "The current match is highlighted in the list as you step with Enter, Shift+Enter or the up and down arrows.",
+          "Prefer the plain find box? The list button in the find bar turns the list off (or back on), and Coffee remembers your choice.",
+        ],
+      },
+      {
+        heading: 'Fixes',
+        items: [
+          "Double-clicking a tab's close button no longer closes the tab next to it as well.",
+        ],
+      },
+    ],
+  },
+  {
     version: '0.1.18',
     date: '2026-11-20',
     title: 'Glance, and themes that are yours',
@@ -129,19 +151,6 @@ module.exports = [
           'Select an address on a page and right-click to go straight to it.',
           'Popup shadows are no longer cut off.',
           'A What\'s new page (Settings → About) tells you what changed in each version.',
-        ],
-      },
-    ],
-  },
-  {
-    version: '0.1.15',
-    date: '2026-11-20',
-    title: 'Stay signed in',
-    sections: [
-      {
-        items: [
-          'Sites that keep you signed in "until the browser closes" now stay signed in when Coffee restarts or updates, as long as Restore tabs is on. They\'re saved encrypted, and clearing your browsing data clears them too.',
-          'Recent sign-ins are no longer lost when an update installs.',
         ],
       },
     ],

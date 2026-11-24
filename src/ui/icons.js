@@ -42,6 +42,7 @@
     pip: s('<rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11.5" width="6.5" height="5" rx="1" fill="currentColor" stroke="none"/>'),
     trash: s('<path d="M4.5 7h15M9.5 7V4.8h5V7M6.5 7l.8 12.2a1.5 1.5 0 0 0 1.5 1.3h6.4a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/>'),
     check: s('<path d="M5 12.5l4.5 4.5L19 7.5"/>'),
+    list: s('<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1" fill="currentColor"/><circle cx="4.5" cy="12" r="1" fill="currentColor"/><circle cx="4.5" cy="18" r="1" fill="currentColor"/>'),
     arrowUp: s('<path d="M12 19V5M6 11l6-6 6 6"/>'),
     arrowDown: s('<path d="M12 5v14M6 13l6 6 6-6"/>'),
     sparkle: s('<path d="M12 3.5l1.9 5.2c.2.6.7 1.1 1.4 1.4l5.2 1.9-5.2 1.9c-.6.2-1.1.7-1.4 1.4L12 20.5l-1.9-5.2a2.3 2.3 0 0 0-1.4-1.4L3.5 12l5.2-1.9c.6-.2 1.1-.7 1.4-1.4z"/>'),

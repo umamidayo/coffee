@@ -157,6 +157,123 @@ function openFind(which = 'find:open') {
     });
 }
 
+// Find results list: every match on the page with the words around it and the
+// heading it sits under, so you can see them all at once instead of stepping
+// through with Enter. Runs in the isolated world, so the page can't see or break it.
+// shortcut: main frame only (matches inside iframes still count and highlight, but aren't listed).
+const FIND_LIMIT = 300;
+const FIND_SCAN = `(async (q, goto, limit) => {
+  // Walking the page is the slow part (it forces style), so the text index is
+  // built once and reused for every keystroke until the page changes, and it's
+  // built in small slices so the page keeps scrolling and painting meanwhile.
+  const W = window;
+  if (!W.coffeeFindObs) {
+    W.coffeeFindObs = new MutationObserver(() => { W.coffeeFindIx = null; W.coffeeFindBuild = null; });
+    W.coffeeFindObs.observe(document, { subtree: true, childList: true, characterData: true, attributes: true });
+  }
+  const build = async () => {
+    const vis = new Map();
+    const shown = (el) => {
+      if (!vis.has(el)) vis.set(el, !el.closest('script,style,noscript,template,head') && el.checkVisibility({ visibilityProperty: true }));
+      return vis.get(el);
+    };
+    const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_TEXT);
+    const BLOCK = 'p,li,dt,dd,td,th,h1,h2,h3,h4,h5,h6,pre,blockquote,figcaption,div,section,article,header,footer,nav,aside,main,form,label,button';
+    const nodes = []; const starts = []; const heads = []; let text = ''; let head = ''; let block = null;
+    let t0 = performance.now(); let c = 0;
+    for (let n; (n = walker.nextNode());) {
+      if (++c % 200 === 0 && performance.now() - t0 > 8) { await new Promise((r) => setTimeout(r)); t0 = performance.now(); }
+      const el = n.parentElement;
+      if (!el || !n.data || !shown(el)) continue;
+      const h = el.closest('h1,h2,h3,h4,h5,h6');
+      if (h) head = h.textContent.replace(/\\s+/g, ' ').trim().slice(0, 80);
+      // A line break between blocks: snippets stop at their own paragraph, and no match spans two.
+      const b = el.closest(BLOCK);
+      if (b !== block) { text += '\\n'; block = b; }
+      nodes.push(n); starts.push(text.length); heads.push(head); text += n.data;
+    }
+    return { nodes, starts, heads, text };
+  };
+  let ix = W.coffeeFindIx;
+  if (!ix) {
+    // One build at a time; if the page changes mid-build, use the result but don't keep it.
+    if (!W.coffeeFindBuild) { const p = W.coffeeFindBuild = build().then((r) => { if (W.coffeeFindBuild === p) W.coffeeFindIx = r; return r; }); }
+    ix = await W.coffeeFindBuild;
+  }
+  const { nodes, starts, heads, text } = ix;
+  const at = (i) => { let lo = 0, hi = starts.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (starts[m] <= i) lo = m; else hi = m - 1; } return lo; };
+  const re = new RegExp(q.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'), 'gi');
+  const flat = (s) => s.replace(/\\s+/g, ' ');
+  const out = []; let m; let k = 0;
+  while ((m = re.exec(text)) && out.length < limit) {
+    const i = m.index; const j = at(i);
+    if (goto === k) { getSelection().collapse(nodes[j], i - starts[j]); return true; }
+    if (goto < 0) {
+      const end = i + m[0].length;
+      const pre = text.slice(Math.max(0, i - 60), i).split('\\n').pop();
+      const post = text.slice(end, end + 80).split('\\n')[0];
+      const p = flat(pre).trimStart();
+      out.push({ pre: p.length > 40 ? '… ' + p.slice(-40).replace(/^\\S*\\s/, '') : p, hit: flat(m[0]), post: flat(post).trimEnd(), section: heads[j] });
+    }
+    k++;
+  }
+  return goto < 0 ? out : false;
+})`;
+
+function findScan(wc, text, goto = -1) {
+  const code = `${FIND_SCAN}(${JSON.stringify(text)}, ${goto}, ${FIND_LIMIT})`;
+  return wc.executeJavaScriptInIsolatedWorld(1001, [{ code }]).catch(() => (goto < 0 ? [] : false));
+}
+
+function findListOn() {
+  return data.settings.data.findList !== false;
+}
+
+/** Show (or refresh) the results list under the find box. */
+async function showFindList(text) {
+  const wc = activeWc();
+  const state = W;
+  if (!wc || !text || !findListOn() || !W.findRect) return W.overlay.isOpen('findlist') && W.overlay.close();
+  const seq = (W.findSeq = (W.findSeq || 0) + 1);
+  const items = await findScan(wc, text);
+  inWindow(state, () => {
+    if (seq !== W.findSeq || !W.tabs.active || W.tabs.active.find !== text) return; // a newer search, or find closed
+    const r = W.findRect;
+    const rows = new Set(items.map((x) => x.section)).size + items.length; // headings + matches
+    const height = 40 + (items.length ? Math.min(rows, 12) * 30 : 30) + 8 + 2 * M;
+    // Narrow and under the find box's right end, so it hides less of the page you're searching.
+    const width = Math.min(r.width, 440) + 2 * M;
+    W.overlay.open('findlist', { x: r.x + r.width - width + M, y: r.y + r.height + 6 - M, width, height },
+      { items, query: text, active: W.findActive || 0, matches: W.findMatches, limit: FIND_LIMIT },
+      { onPick: (p) => {
+        const tab = W.tabs.active;
+        if (!tab || !tab.wc || tab.find !== text) return;
+        W.ui.focus(); // keep typing in the find box
+        findScan(tab.wc, text, Number(p.index)).then((ok) => {
+          if (ok && tab.wc && tab.find === text) tab.wc.findInPage(text, { findNext: true, forward: true });
+        });
+      } });
+  });
+}
+
+/**
+ * Chromium only scrolls to a match that's off screen, so one sitting under the
+ * results list counts as "visible" and you'd never see it. Scroll it into the
+ * clear part of the page below the list instead.
+ * shortcut: scrolls the window only, so pages that scroll an inner box keep the old behaviour.
+ */
+function keepMatchClearOfList(tab, area) {
+  if (!tab.view || !tab.wc) return;
+  const v = tab.view.getBounds(); // area is in the same units (DIPs), relative to the page view
+  const o = W.overlay.view.getBounds();
+  const list = { x: o.x + M - v.x, y: o.y + M - v.y, right: o.x + o.width - M - v.x, bottom: o.y + o.height - M - v.y };
+  const covered = area.x < list.right && area.x + area.width > list.x && area.y < list.bottom && area.y + area.height > list.y;
+  if (!covered) return;
+  const target = list.bottom + (v.height - list.bottom) / 2;
+  const dy = Math.round((area.y + area.height / 2 - target) / tab.wc.getZoomFactor());
+  tab.wc.executeJavaScriptInIsolatedWorld(1001, [{ code: `scrollBy(0, ${dy})` }]).catch(() => {});
+}
+
 function focusUrlbar() {
   if (!W.ui || W.ui.isDestroyed()) return;
   W.ui.focus();
@@ -413,7 +530,7 @@ function createWindow(opts = {}) {
     W.float.hide('tabcard');
     emit('window', windowState());
     updatePeekWatch();
-    if (W.overlay.type !== 'suggest' && W.overlay.type !== 'splitdrag') W.overlay.close();
+    if (!['suggest', 'splitdrag', 'findlist'].includes(W.overlay.type)) W.overlay.close();
   }));
 
   // Mouse back/forward buttons.
@@ -492,6 +609,7 @@ function createWindow(opts = {}) {
       }
       else if (tab.wc && !opts.fromPage) tab.wc.focus();
       emit('find:close');
+      if (W.overlay.isOpen('findlist')) W.overlay.close();
     },
     bookmarksChanged: bookmarksChanged,
     htmlFullscreen: (tab, on) => {
@@ -509,7 +627,14 @@ function createWindow(opts = {}) {
       watchFullscreenEdge(on);
     },
     found: (tab, r) => {
-      if (tab === W.tabs.active) emit('find:result', { active: r.activeMatchOrdinal, matches: r.matches });
+      if (tab !== W.tabs.active) return;
+      emit('find:result', { active: r.activeMatchOrdinal, matches: r.matches });
+      // Chromium reports progress many times per search; redraw the list only when it says something new.
+      if (!r.finalUpdate && r.activeMatchOrdinal === W.findActive) return;
+      if (r.activeMatchOrdinal) W.findActive = r.activeMatchOrdinal;
+      W.findMatches = r.matches;
+      W.overlay.update('findlist', { active: r.activeMatchOrdinal, matches: r.matches });
+      if (r.finalUpdate && r.selectionArea && W.overlay.isOpen('findlist')) keepMatchClearOfList(tab, r.selectionArea);
     },
     hoverUrl: (tab, url) => showStatus(tab, url),
     contextMenu: (tab, params) => pageMenu(tab, params),
@@ -643,6 +768,7 @@ function publicSettings() {
     bookmarksBar: s.bookmarksBar,
     bookmarksBarShown: bookmarksBarShown(),
     bookmarksButton: !!s.bookmarksButton,
+    findList: findListOn(),
     tabLayout: tabsOnTop() ? 'horizontal' : 'vertical',
     compactSidebar: !!data.settings.data.compactSidebar,
     tabTitles: data.settings.data.tabTitles !== false,
@@ -2558,6 +2684,10 @@ function setSetting(key, value) {
     case 'bookmarksBar':
       s.bookmarksBar = !!value;
       break;
+    case 'findList':
+      s.findList = !!value;
+      eachWindow(() => { if (!s.findList && W.overlay.isOpen('findlist')) W.overlay.close(); });
+      break;
     case 'bookmarksButton':
       s.bookmarksButton = !!value;
       if (!s.bookmarksButton) eachWindow(() => { if (W.overlay.isOpen('bmfolder')) W.overlay.close(); });
@@ -2896,15 +3026,35 @@ function runCommand(e, kind, type, p) {
     case 'find': {
       const wc = activeWc();
       const tab = W.tabs.active;
-      if (!wc || !p.text) { if (wc) wc.stopFindInPage('clearSelection'); emit('find:result', { active: 0, matches: 0 }); break; }
+      if (!wc || !p.text) {
+        if (wc) wc.stopFindInPage('clearSelection');
+        if (tab) tab.find = null;
+        emit('find:result', { active: 0, matches: 0 });
+        if (W.overlay.isOpen('findlist')) W.overlay.close();
+        break;
+      }
+      const fresh = tab.find !== p.text || !p.next;
       tab.find = p.text;
+      if (fresh) { W.findActive = 0; W.findMatches = undefined; }
       wc.findInPage(p.text, { forward: p.forward !== false, findNext: !!p.next });
+      if (p.rect) W.findRect = p.rect;
+      if (fresh) {
+        // Wait for a pause in typing: one scan for the word, not one per letter.
+        const state = W; const text = p.text;
+        clearTimeout(W.findTimer);
+        W.findTimer = setTimeout(() => inWindow(state, () => showFindList(text)), 150);
+      }
       break;
     }
+    case 'find:list':
+      if (p.rect) W.findRect = p.rect;
+      if (W.tabs.active && W.tabs.active.find) showFindList(W.tabs.active.find);
+      break;
     case 'find:stop': {
       const wc = activeWc();
       if (wc) wc.stopFindInPage('keepSelection');
       if (W.tabs.active) W.tabs.active.find = null;
+      if (W.overlay.isOpen('findlist')) W.overlay.close();
       break;
     }
     case 'zoom:reset': zoom(0); break;

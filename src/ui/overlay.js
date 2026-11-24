@@ -104,6 +104,43 @@
     });
   }
 
+  // ---------- find in page: all matches ----------
+  // Every match with the words around it, grouped under the heading it sits
+  // in. Click one to jump there; the current match follows Enter / arrows.
+  let fl = null; // { rows, list, head, data }
+  function renderFindList(data, reopen) {
+    const p = panel('findlist', reopen);
+    p.innerHTML = '<div class="fl-head"></div><div class="fl-list"></div>';
+    fl = { rows: [], list: p.lastChild, head: p.firstChild, data };
+    if (!data.items.length) fl.list.innerHTML = '<div class="fl-empty">No matches</div>';
+    let section = null;
+    data.items.forEach((it, i) => {
+      if (it.section !== section) {
+        section = it.section;
+        const n = data.items.filter((x) => x.section === section).length;
+        fl.list.insertAdjacentHTML('beforeend', `<div class="fl-sec"><span>${esc(section || 'Top of page')}</span><b>${n}</b></div>`);
+      }
+      const r = document.createElement('div');
+      r.className = 'fl-row';
+      r.innerHTML = `<span class="fl-n">${i + 1}</span><span class="fl-t"><span class="fl-pre"><bdi dir="ltr">${esc(it.pre.replace(/ $/, ' '))}</bdi></span><mark>${esc(it.hit)}</mark><span class="fl-post">${esc(it.post)}</span></span>`;
+      // mousedown, not click: keeps typing in the find box (see renderSuggest).
+      r.addEventListener('mousedown', (e) => { e.preventDefault(); if (e.button === 0) pick({ index: i, keepOpen: true }); });
+      fl.rows.push(r);
+      fl.list.appendChild(r);
+    });
+    setFindActive(data.active, data.matches);
+  }
+  function setFindActive(active, matches) {
+    if (!fl) return;
+    if (matches !== undefined) fl.data.matches = matches;
+    const total = fl.data.matches ?? fl.data.items.length;
+    const more = total > fl.data.items.length ? ` · showing the first ${fl.data.items.length}` : '';
+    fl.head.textContent = `${total} match${total === 1 ? '' : 'es'}${more}`;
+    fl.rows.forEach((r, i) => r.classList.toggle('sel', i === active - 1));
+    const cur = fl.rows[active - 1];
+    if (cur) cur.scrollIntoView({ block: 'nearest' });
+  }
+
   // ---------- tab search (Ctrl+Shift+A) ----------
   // Every open tab, most recently used first. Type to filter; Enter or click
   // switches to it; the × (or middle-click, or Shift+Delete) closes it.
@@ -505,6 +542,7 @@
     extinstall: renderExtInstall,
     menu: renderMenu,
     suggest: renderSuggest,
+    findlist: renderFindList,
     downloads: renderDownloads,
     tabsearch: renderTabSearch,
     bookmark: renderBookmark,
@@ -530,9 +568,11 @@
     if (type === 'downloads') renderDownloads(data, true);
     if (type === 'sidebar' && peekStrip) peekStrip.render(data);
     if (type === 'tabsearch' && tsr) { tsr.items = data.items; renderTabSearchList(); }
+    if (type === 'findlist') setFindActive(data.active, data.matches);
   });
   api.on('overlay:hide', () => {
     dropPeek();
+    fl = null;
     current = null;
     keyHandler = null;
     root.textContent = '';

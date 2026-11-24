@@ -17,6 +17,7 @@ const settings = new Store('settings', {
   adblock: true,
   bookmarksBar: true,
   bookmarksButton: false,  // toolbar button that opens your bookmarks as a menu (works with or without the bar)
+  findList: true,          // find in page shows every match in a list (false = the plain find box)
   tabLayout: 'vertical',   // 'vertical' (side) | 'horizontal' (top)
   compactSidebar: false,   // side tabs hidden until the mouse reaches the left edge
   tabTitles: true,         // titles on every tab layout (false = icons only)

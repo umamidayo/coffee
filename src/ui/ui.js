@@ -45,6 +45,7 @@
   document.querySelector('.find-icon').innerHTML = Icons.search;
   $('find-prev').innerHTML = Icons.arrowUp;
   $('find-next').innerHTML = Icons.arrowDown;
+  $('find-list').innerHTML = Icons.list;
   $('find-close').innerHTML = Icons.close;
 
   // Hover hints for the buttons, with their shortcuts.
@@ -63,6 +64,7 @@
     'win-close': 'Close',
     'find-prev': 'Previous match (Shift+Enter)',
     'find-next': 'Next match (Enter)',
+    'find-list': 'Show all matches',
     'find-close': 'Close (Esc)',
   };
   for (const [id, text] of Object.entries(tips)) $(id).title = text;
@@ -79,6 +81,7 @@
   document.addEventListener('mousedown', (e) => {
     const type = state.overlay;
     if (!type || type === 'suggest' || type === 'tooltip') return;
+    if (type === 'findlist' && e.target.closest('#find')) return; // the find box drives its own list
     const toggle = e.target.closest('[data-toggle]');
     if (toggle && toggle.dataset.toggle === type
       && (!toggle.dataset.toggleId || toggle.dataset.toggleId === openFolderId)) suppressClick = toggle;
@@ -96,7 +99,7 @@
     // While a menu or panel is open, the title bar and other drag areas stop
     // dragging the window: Windows takes clicks there before this page sees
     // them, so a click on the title bar couldn't close the menu otherwise.
-    document.body.classList.toggle('popup-open', !!type && !['suggest', 'sidebar', 'splitdrag'].includes(type));
+    document.body.classList.toggle('popup-open', !!type && !['suggest', 'sidebar', 'splitdrag', 'findlist'].includes(type));
   });
 
   // ---------- window ----------
@@ -488,7 +491,7 @@
     if (p && p.text) findInput.value = p.text;
     findInput.focus();
     findInput.select();
-    if (findInput.value) api.send('find', { text: findInput.value });
+    if (findInput.value) api.send('find', { text: findInput.value, rect: rectOf(find) });
   }
   function closeFind() {
     if (find.hidden) return;
@@ -497,14 +500,25 @@
     api.send('find:stop');
     api.send('page:focus');
   }
-  findInput.addEventListener('input', () => api.send('find', { text: findInput.value }));
+  findInput.addEventListener('input', () => api.send('find', { text: findInput.value, rect: rectOf(find) }));
+  // Back in the box after clicking the page (which hides the list): bring the list back.
+  findInput.addEventListener('focus', () => {
+    if (!find.hidden && findInput.value && state.overlay !== 'findlist') api.send('find:list', { rect: rectOf(find) });
+  });
   findInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); api.send('find', { text: findInput.value, forward: !e.shiftKey, next: true }); }
+    const step = e.key === 'Enter' ? !e.shiftKey : e.key === 'ArrowDown' ? true : e.key === 'ArrowUp' ? false : null;
+    if (step !== null) { e.preventDefault(); api.send('find', { text: findInput.value, forward: step, next: true }); }
     else if (e.key === 'Escape') { e.preventDefault(); closeFind(); }
   });
   $('find-next').onclick = () => api.send('find', { text: findInput.value, forward: true, next: true });
   $('find-prev').onclick = () => api.send('find', { text: findInput.value, forward: false, next: true });
   $('find-close').onclick = closeFind;
+  $('find-list').onclick = () => {
+    const on = !state.settings.findList;
+    api.send('settings:set', { key: 'findList', value: on });
+    findInput.focus();
+    if (on && findInput.value) api.send('find:list', { rect: rectOf(find) });
+  };
   api.on('find:open', openFind);
   api.on('find:close', () => { find.hidden = true; findCount.textContent = ''; });
   api.on('find:next', () => { if (!find.hidden) $('find-next').click(); else openFind(); });
@@ -752,6 +766,8 @@
     applyLayout(s);
     $('home').hidden = !s.showHome;
     $('bookmarks-btn').hidden = !s.bookmarksButton;
+    $('find-list').classList.toggle('on', !!s.findList);
+    $('find-list').setAttribute('aria-pressed', String(!!s.findList));
     applyExtensions(!!s.extensions);
     const up = s.update || {};
     $('update-btn').hidden = up.state !== 'ready';
